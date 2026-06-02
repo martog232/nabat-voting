@@ -1,3 +1,9 @@
 spring:
   application:
     name: nabat-voting
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: nabat-voting-group
+      auto-offset-reset: earliest

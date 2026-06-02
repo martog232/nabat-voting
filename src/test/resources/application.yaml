@@ -1,0 +1,5 @@
+spring:
+  kafka:
+    consumer:
+      group-id: nabat-voting-test-group
+      auto-offset-reset: earliest
