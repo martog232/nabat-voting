@@ -2,8 +2,31 @@ spring:
   application:
     name: nabat-voting
 
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5434/nabat_voting_db}
+    username: ${SPRING_DATASOURCE_USERNAME:nabat_voting_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:nabat_voting_password}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
       group-id: nabat-voting-group
       auto-offset-reset: earliest
+
+server:
+  port: ${SERVER_PORT:8081}

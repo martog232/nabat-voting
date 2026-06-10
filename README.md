@@ -21,7 +21,7 @@ src/main/java/com/example/nabatvoting/
 │   └── projection/     # CredibilityProjection (read model)
 └── infrastructure/
     ├── kafka/          # KafkaVoteEventPublisher, KafkaVoteEventConsumer, KafkaTopics
-    ├── persistence/    # InMemoryVoteRepository
+    ├── persistence/    # PostgresVoteRepositoryAdapter, VoteJpaEntity, VoteJpaRepository
     └── config/         # KafkaConfig
 ```
 

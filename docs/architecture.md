@@ -75,11 +75,11 @@ Spring `@KafkaListener` that subscribes to the `vote.cast` topic.  Deserialises 
 into `VoteCastEvent` using `JsonDeserializer<VoteCastEvent>` and delegates to
 `CredibilityProjection#apply(VoteCastEvent)`.
 
-### InMemoryVoteRepository
+### PostgresVoteRepositoryAdapter
 
-Implements `VoteRepository` (outbound port) using a `CopyOnWriteArrayList`.  This is the default
-implementation for local development.  A production deployment should replace it with a
-database-backed adapter (e.g. Spring Data JPA or R2DBC).
+Implements `VoteRepository` (outbound port) using Spring Data JPA (via `VoteJpaEntity` /
+`VoteJpaRepository`).  This is the production adapter and is annotated `@Primary` so it takes
+precedence over any in-memory alternative.
 
 ## Testing Strategy
 

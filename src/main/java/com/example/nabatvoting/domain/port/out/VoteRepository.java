@@ -1,16 +1,22 @@
 package com.example.nabatvoting.domain.port.out;
 
+import com.example.nabatvoting.domain.model.AlertId;
 import com.example.nabatvoting.domain.model.Vote;
+import com.example.nabatvoting.domain.model.VoterId;
 
-/**
- * Outbound port: persists and loads votes.
- */
+import java.util.Optional;
+
 public interface VoteRepository {
 
-    /**
-     * Persists a new vote.
-     *
-     * @param vote the vote to save
-     */
     void save(Vote vote);
+
+    void deleteByAlertIdAndVoterId(AlertId alertId, VoterId voterId);
+
+    Optional<Vote> findByAlertIdAndVoterId(AlertId alertId, VoterId voterId);
+
+    int countUpvotes(AlertId alertId);
+
+    int countDownvotes(AlertId alertId);
+
+    int countConfirmations(AlertId alertId);
 }

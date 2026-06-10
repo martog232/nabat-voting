@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: nabat-voting-postgres
+    environment:
+      POSTGRES_DB: nabat_voting_db
+      POSTGRES_USER: nabat_voting_user
+      POSTGRES_PASSWORD: nabat_voting_password
+    ports:
+      - "${POSTGRES_HOST_PORT:-5434}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nabat_voting_user -d nabat_voting_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: nabat-voting-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      CLUSTER_ID: DWKW8vl4RI6tPZGCbhhHVg
+
+  nabat-voting-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nabat-voting-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/nabat_voting_db
+      SPRING_DATASOURCE_USERNAME: nabat_voting_user
+      SPRING_DATASOURCE_PASSWORD: nabat_voting_password
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: 8081
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+
+    ports:
+      - "8081:8081"
+      - "5005:5005"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local

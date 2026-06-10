@@ -2,6 +2,7 @@ package com.example.nabatvoting.infrastructure.kafka;
 
 import com.example.nabatvoting.application.projection.CredibilityProjection;
 import com.example.nabatvoting.domain.model.AlertId;
+import com.example.nabatvoting.domain.model.VoteType;
 import com.example.nabatvoting.domain.model.VoterId;
 import com.example.nabatvoting.domain.port.in.CastVoteCommand;
 import com.example.nabatvoting.domain.port.in.CastVoteUseCase;
@@ -16,18 +17,6 @@ import java.time.Duration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-/**
- * Integration test that verifies the full Kafka event flow:
- *
- * <ol>
- *   <li>A vote is cast via {@link CastVoteUseCase}.</li>
- *   <li>A {@link com.example.nabatvoting.domain.event.VoteCastEvent} is published
- *       to the embedded Kafka broker on the {@code vote.cast} topic.</li>
- *   <li>The {@link KafkaVoteEventConsumer} receives the event and applies it to
- *       the {@link CredibilityProjection}.</li>
- *   <li>The projection reflects the updated credibility score.</li>
- * </ol>
- */
 @SpringBootTest
 @EmbeddedKafka(
         partitions = 1,
@@ -44,9 +33,9 @@ class VoteKafkaIntegrationTest {
     private CredibilityProjection credibilityProjection;
 
     @Test
-    void positiveVote_updatesCredibilityProjectionViaKafka() {
+    void upvote_updatesCredibilityProjectionViaKafka() {
         CastVoteCommand command = new CastVoteCommand(
-                new AlertId("alert-kafka-1"), new VoterId("voter-kafka-A"), true);
+                new AlertId("alert-kafka-1"), new VoterId("voter-kafka-A"), VoteType.UPVOTE);
 
         castVoteUseCase.castVote(command);
 
@@ -56,9 +45,9 @@ class VoteKafkaIntegrationTest {
     }
 
     @Test
-    void negativeVote_decreasesCredibilityScore() {
+    void downvote_decreasesCredibilityScore() {
         CastVoteCommand command = new CastVoteCommand(
-                new AlertId("alert-kafka-2"), new VoterId("voter-kafka-B"), false);
+                new AlertId("alert-kafka-2"), new VoterId("voter-kafka-B"), VoteType.DOWNVOTE);
 
         castVoteUseCase.castVote(command);
 
@@ -68,15 +57,27 @@ class VoteKafkaIntegrationTest {
     }
 
     @Test
+    void confirm_addsTwoToCredibilityScore() {
+        CastVoteCommand command = new CastVoteCommand(
+                new AlertId("alert-kafka-4"), new VoterId("voter-kafka-D"), VoteType.CONFIRM);
+
+        castVoteUseCase.castVote(command);
+
+        await().atMost(Duration.ofSeconds(30))
+                .untilAsserted(() ->
+                        assertThat(credibilityProjection.getScore("alert-kafka-4")).isEqualTo(2));
+    }
+
+    @Test
     void multipleVotes_accumulateCredibilityScore() {
         String alertId = "alert-kafka-3";
 
         castVoteUseCase.castVote(new CastVoteCommand(
-                new AlertId(alertId), new VoterId("voter-1"), true));
+                new AlertId(alertId), new VoterId("voter-1"), VoteType.UPVOTE));
         castVoteUseCase.castVote(new CastVoteCommand(
-                new AlertId(alertId), new VoterId("voter-2"), true));
+                new AlertId(alertId), new VoterId("voter-2"), VoteType.UPVOTE));
         castVoteUseCase.castVote(new CastVoteCommand(
-                new AlertId(alertId), new VoterId("voter-3"), false));
+                new AlertId(alertId), new VoterId("voter-3"), VoteType.DOWNVOTE));
 
         await().atMost(Duration.ofSeconds(30))
                 .untilAsserted(() ->
