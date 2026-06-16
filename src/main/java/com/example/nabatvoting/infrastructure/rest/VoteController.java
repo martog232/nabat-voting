@@ -9,13 +9,13 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
@@ -31,6 +31,14 @@ public class VoteController {
         this.castVoteUseCase = castVoteUseCase;
     }
 
+    private String currentUserId() {
+        Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
+            throw new org.springframework.security.authentication.BadCredentialsException("Not authenticated");
+        }
+        return (String) auth.getPrincipal();
+    }
+
     @PostMapping
     public ResponseEntity<VoteResponse> castVote(
             @PathVariable UUID alertId,
@@ -38,7 +46,7 @@ public class VoteController {
     ) {
         CastVoteCommand command = new CastVoteCommand(
                 new AlertId(alertId.toString()),
-                new VoterId(request.userId().toString()),
+                new VoterId(currentUserId()),
                 request.voteType()
         );
         VoteId voteId = castVoteUseCase.castVote(command);
@@ -48,22 +56,16 @@ public class VoteController {
     }
 
     @DeleteMapping
-    public ResponseEntity<Void> removeVote(
-            @PathVariable UUID alertId,
-            @RequestParam UUID userId
-    ) {
-        castVoteUseCase.removeVote(new AlertId(alertId.toString()), new VoterId(userId.toString()));
+    public ResponseEntity<Void> removeVote(@PathVariable UUID alertId) {
+        castVoteUseCase.removeVote(new AlertId(alertId.toString()), new VoterId(currentUserId()));
         return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/me")
-    public ResponseEntity<UserVoteResponse> hasUserVoted(
-            @PathVariable UUID alertId,
-            @RequestParam UUID userId
-    ) {
+    public ResponseEntity<UserVoteResponse> hasUserVoted(@PathVariable UUID alertId) {
         boolean hasVoted = castVoteUseCase.hasUserVoted(
                 new AlertId(alertId.toString()),
-                new VoterId(userId.toString())
+                new VoterId(currentUserId())
         );
         return ResponseEntity.ok(new UserVoteResponse(hasVoted));
     }
@@ -79,7 +81,7 @@ public class VoteController {
         ));
     }
 
-    public record VoteRequest(@NotNull UUID userId, @NotNull com.example.nabatvoting.domain.model.VoteType voteType) {}
+    public record VoteRequest(@NotNull com.example.nabatvoting.domain.model.VoteType voteType) {}
 
     public record VoteResponse(UUID id, UUID alertId, com.example.nabatvoting.domain.model.VoteType voteType, String createdAt) {}
 
