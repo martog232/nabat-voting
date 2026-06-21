@@ -1,6 +1,7 @@
 package com.example.nabatvoting.infrastructure.rest;
 
-import jakarta.servlet.http.HttpServletResponse;
+import com.example.nabatvoting.domain.exception.DuplicateVoteException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -19,6 +20,26 @@ public class GlobalExceptionHandler {
                 "status", 401,
                 "error", "Unauthorized",
                 "message", ex.getMessage(),
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    @ExceptionHandler(DuplicateVoteException.class)
+    public ResponseEntity<Map<String, Object>> handleDuplicateVote(DuplicateVoteException ex) {
+        return conflict(ex.getMessage());
+    }
+
+    /** Safety net for the (alert_id, voter_id) unique constraint under a concurrent double-vote. */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleDataIntegrity(DataIntegrityViolationException ex) {
+        return conflict("A vote already exists for this voter and alert");
+    }
+
+    private ResponseEntity<Map<String, Object>> conflict(String message) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                "status", 409,
+                "error", "Conflict",
+                "message", message,
                 "timestamp", Instant.now().toString()
         ));
     }

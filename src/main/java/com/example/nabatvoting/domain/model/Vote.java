@@ -1,8 +1,11 @@
 package com.example.nabatvoting.domain.model;
 
+import lombok.Getter;
+
 import java.time.Instant;
 import java.util.Objects;
 
+@Getter
 public final class Vote {
 
     private final VoteId id;
@@ -19,9 +22,4 @@ public final class Vote {
         this.castAt = Objects.requireNonNull(castAt, "castAt must not be null");
     }
 
-    public VoteId getId() { return id; }
-    public AlertId getAlertId() { return alertId; }
-    public VoterId getVoterId() { return voterId; }
-    public VoteType getVoteType() { return voteType; }
-    public Instant getCastAt() { return castAt; }
 }

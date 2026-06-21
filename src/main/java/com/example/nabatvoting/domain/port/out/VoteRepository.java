@@ -4,6 +4,7 @@ import com.example.nabatvoting.domain.model.AlertId;
 import com.example.nabatvoting.domain.model.Vote;
 import com.example.nabatvoting.domain.model.VoterId;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface VoteRepository {
@@ -19,4 +20,7 @@ public interface VoteRepository {
     int countDownvotes(AlertId alertId);
 
     int countConfirmations(AlertId alertId);
+
+    /** Every alert that has at least one vote — used to rebuild the projection. */
+    List<AlertId> findDistinctAlertIds();
 }

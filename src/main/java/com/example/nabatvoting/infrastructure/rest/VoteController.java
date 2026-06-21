@@ -1,7 +1,6 @@
 package com.example.nabatvoting.infrastructure.rest;
 
 import com.example.nabatvoting.domain.model.AlertId;
-import com.example.nabatvoting.domain.model.VoteId;
 import com.example.nabatvoting.domain.model.VoterId;
 import com.example.nabatvoting.domain.port.in.CastVoteCommand;
 import com.example.nabatvoting.domain.port.in.CastVoteUseCase;
@@ -49,10 +48,11 @@ public class VoteController {
                 new VoterId(currentUserId()),
                 request.voteType()
         );
-        VoteId voteId = castVoteUseCase.castVote(command);
+        CastVoteUseCase.CastVoteResult result = castVoteUseCase.castVote(command);
+        HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;
         return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(new VoteResponse(voteId.value(), alertId, request.voteType(), Instant.now().toString()));
+                .status(status)
+                .body(new VoteResponse(result.voteId().value(), alertId, request.voteType(), Instant.now().toString()));
     }
 
     @DeleteMapping
@@ -62,12 +62,12 @@ public class VoteController {
     }
 
     @GetMapping("/me")
-    public ResponseEntity<UserVoteResponse> hasUserVoted(@PathVariable UUID alertId) {
-        boolean hasVoted = castVoteUseCase.hasUserVoted(
+    public ResponseEntity<UserVoteResponse> myVote(@PathVariable UUID alertId) {
+        var voteType = castVoteUseCase.getUserVote(
                 new AlertId(alertId.toString()),
                 new VoterId(currentUserId())
         );
-        return ResponseEntity.ok(new UserVoteResponse(hasVoted));
+        return ResponseEntity.ok(new UserVoteResponse(voteType.isPresent(), voteType.orElse(null)));
     }
 
     @GetMapping("/stats")
@@ -85,7 +85,7 @@ public class VoteController {
 
     public record VoteResponse(UUID id, UUID alertId, com.example.nabatvoting.domain.model.VoteType voteType, String createdAt) {}
 
-    public record UserVoteResponse(boolean hasVoted) {}
+    public record UserVoteResponse(boolean hasVoted, com.example.nabatvoting.domain.model.VoteType voteType) {}
 
     public record VoteStatsResponse(int upvotes, int downvotes, int confirmations, int credibilityScore) {}
 }

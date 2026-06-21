@@ -8,8 +8,8 @@ import com.example.nabatvoting.domain.port.out.VoteRepository;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 @Primary
 @Component
@@ -57,6 +57,13 @@ public class PostgresVoteRepositoryAdapter implements VoteRepository {
     @Override
     public int countConfirmations(AlertId alertId) {
         return jpaRepository.countConfirmationsByAlertId(alertId.value());
+    }
+
+    @Override
+    public List<AlertId> findDistinctAlertIds() {
+        return jpaRepository.findDistinctAlertIds().stream()
+                .map(AlertId::new)
+                .toList();
     }
 
     private Vote toDomain(VoteJpaEntity entity) {

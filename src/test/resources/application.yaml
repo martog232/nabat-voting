@@ -1,3 +1,10 @@
+# Test-only JWT secret. The test classpath's application.yaml shadows the main
+# one, so the security beans need this property here to bootstrap the context.
+jwt:
+  secret: test-secret-key-that-is-at-least-32-characters-long-0123456789
+  expiration: 86400000
+  refresh-expiration: 604800000
+
 spring:
   datasource:
     url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1

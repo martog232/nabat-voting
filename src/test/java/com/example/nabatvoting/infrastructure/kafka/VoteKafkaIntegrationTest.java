@@ -1,6 +1,5 @@
 package com.example.nabatvoting.infrastructure.kafka;
 
-import com.example.nabatvoting.application.projection.CredibilityProjection;
 import com.example.nabatvoting.domain.model.AlertId;
 import com.example.nabatvoting.domain.model.VoteType;
 import com.example.nabatvoting.domain.model.VoterId;
@@ -17,10 +16,17 @@ import java.time.Duration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
+/**
+ * End-to-end check of the CQRS read path: casting a vote publishes a
+ * {@code VoteCastEvent} to Kafka, the consumer recomputes the durable
+ * {@code alert_credibility} projection, and {@link CastVoteUseCase#getVoteStats}
+ * reads the resulting score back. The {@code await} blocks model the eventual
+ * consistency between the write-model commit and the projection catching up.
+ */
 @SpringBootTest
 @EmbeddedKafka(
         partitions = 1,
-        topics = {KafkaTopics.VOTE_CAST},
+        topics = {KafkaTopics.VOTE_CAST, KafkaTopics.VOTE_REMOVED},
         bootstrapServersProperty = "spring.kafka.bootstrap-servers"
 )
 @DirtiesContext
@@ -29,43 +35,49 @@ class VoteKafkaIntegrationTest {
     @Autowired
     private CastVoteUseCase castVoteUseCase;
 
-    @Autowired
-    private CredibilityProjection credibilityProjection;
+    private int scoreOf(String alertId) {
+        return castVoteUseCase.getVoteStats(new AlertId(alertId)).credibilityScore();
+    }
 
     @Test
     void upvote_updatesCredibilityProjectionViaKafka() {
-        CastVoteCommand command = new CastVoteCommand(
-                new AlertId("alert-kafka-1"), new VoterId("voter-kafka-A"), VoteType.UPVOTE);
-
-        castVoteUseCase.castVote(command);
+        castVoteUseCase.castVote(new CastVoteCommand(
+                new AlertId("alert-kafka-1"), new VoterId("voter-kafka-A"), VoteType.UPVOTE));
 
         await().atMost(Duration.ofSeconds(30))
-                .untilAsserted(() ->
-                        assertThat(credibilityProjection.getScore("alert-kafka-1")).isEqualTo(1));
+                .untilAsserted(() -> assertThat(scoreOf("alert-kafka-1")).isEqualTo(1));
     }
 
     @Test
     void downvote_decreasesCredibilityScore() {
-        CastVoteCommand command = new CastVoteCommand(
-                new AlertId("alert-kafka-2"), new VoterId("voter-kafka-B"), VoteType.DOWNVOTE);
-
-        castVoteUseCase.castVote(command);
+        castVoteUseCase.castVote(new CastVoteCommand(
+                new AlertId("alert-kafka-2"), new VoterId("voter-kafka-B"), VoteType.DOWNVOTE));
 
         await().atMost(Duration.ofSeconds(30))
-                .untilAsserted(() ->
-                        assertThat(credibilityProjection.getScore("alert-kafka-2")).isEqualTo(-1));
+                .untilAsserted(() -> assertThat(scoreOf("alert-kafka-2")).isEqualTo(-1));
     }
 
     @Test
     void confirm_addsTwoToCredibilityScore() {
-        CastVoteCommand command = new CastVoteCommand(
-                new AlertId("alert-kafka-4"), new VoterId("voter-kafka-D"), VoteType.CONFIRM);
-
-        castVoteUseCase.castVote(command);
+        castVoteUseCase.castVote(new CastVoteCommand(
+                new AlertId("alert-kafka-4"), new VoterId("voter-kafka-D"), VoteType.CONFIRM));
 
         await().atMost(Duration.ofSeconds(30))
-                .untilAsserted(() ->
-                        assertThat(credibilityProjection.getScore("alert-kafka-4")).isEqualTo(2));
+                .untilAsserted(() -> assertThat(scoreOf("alert-kafka-4")).isEqualTo(2));
+    }
+
+    @Test
+    void removeVote_recomputesProjectionBackToZeroViaKafka() {
+        String alertId = "alert-kafka-rm";
+        VoterId voter = new VoterId("voter-kafka-rm");
+
+        castVoteUseCase.castVote(new CastVoteCommand(new AlertId(alertId), voter, VoteType.UPVOTE));
+        await().atMost(Duration.ofSeconds(30))
+                .untilAsserted(() -> assertThat(scoreOf(alertId)).isEqualTo(1));
+
+        castVoteUseCase.removeVote(new AlertId(alertId), voter);
+        await().atMost(Duration.ofSeconds(30))
+                .untilAsserted(() -> assertThat(scoreOf(alertId)).isZero());
     }
 
     @Test
@@ -80,7 +92,6 @@ class VoteKafkaIntegrationTest {
                 new AlertId(alertId), new VoterId("voter-3"), VoteType.DOWNVOTE));
 
         await().atMost(Duration.ofSeconds(30))
-                .untilAsserted(() ->
-                        assertThat(credibilityProjection.getScore(alertId)).isEqualTo(1));
+                .untilAsserted(() -> assertThat(scoreOf(alertId)).isEqualTo(1));
     }
 }

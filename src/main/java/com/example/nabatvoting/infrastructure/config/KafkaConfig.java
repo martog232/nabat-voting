@@ -1,6 +1,7 @@
 package com.example.nabatvoting.infrastructure.config;
 
 import com.example.nabatvoting.domain.event.VoteCastEvent;
+import com.example.nabatvoting.domain.event.VoteRemovedEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -23,6 +24,7 @@ import org.springframework.kafka.annotation.EnableKafka;
 import java.util.Map;
 
 import static com.example.nabatvoting.infrastructure.kafka.KafkaTopics.VOTE_CAST;
+import static com.example.nabatvoting.infrastructure.kafka.KafkaTopics.VOTE_REMOVED;
 
 /**
  * Kafka infrastructure configuration for the voting module.
@@ -52,6 +54,11 @@ public class KafkaConfig {
     @Bean
     public NewTopic voteCastTopic() {
         return TopicBuilder.name(VOTE_CAST).partitions(1).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic voteRemovedTopic() {
+        return TopicBuilder.name(VOTE_REMOVED).partitions(1).replicas(1).build();
     }
 
     // --------------------------------------------------------- shared mapper
@@ -85,6 +92,26 @@ public class KafkaConfig {
         return new KafkaTemplate<>(voteCastProducerFactory);
     }
 
+    @Bean
+    public ProducerFactory<String, VoteRemovedEvent> voteRemovedProducerFactory(ObjectMapper kafkaObjectMapper) {
+        JsonSerializer<VoteRemovedEvent> valueSerializer = new JsonSerializer<>(kafkaObjectMapper);
+        valueSerializer.setAddTypeInfo(false);
+        return new DefaultKafkaProducerFactory<>(
+                Map.of(
+                        ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
+                        ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class
+                ),
+                new StringSerializer(),
+                valueSerializer
+        );
+    }
+
+    @Bean
+    public KafkaTemplate<String, VoteRemovedEvent> voteRemovedKafkaTemplate(
+            ProducerFactory<String, VoteRemovedEvent> voteRemovedProducerFactory) {
+        return new KafkaTemplate<>(voteRemovedProducerFactory);
+    }
+
     // --------------------------------------------------------------- consumer
 
     @Bean
@@ -109,6 +136,31 @@ public class KafkaConfig {
         ConcurrentKafkaListenerContainerFactory<String, VoteCastEvent> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(voteCastConsumerFactory);
+        return factory;
+    }
+
+    @Bean
+    public ConsumerFactory<String, VoteRemovedEvent> voteRemovedConsumerFactory(ObjectMapper kafkaObjectMapper) {
+        JsonDeserializer<VoteRemovedEvent> deserializer =
+                new JsonDeserializer<>(VoteRemovedEvent.class, kafkaObjectMapper);
+        deserializer.addTrustedPackages("com.example.nabatvoting.*");
+        return new DefaultKafkaConsumerFactory<>(
+                Map.of(
+                        ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
+                        ConsumerConfig.GROUP_ID_CONFIG, groupId,
+                        ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
+                ),
+                new StringDeserializer(),
+                deserializer
+        );
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, VoteRemovedEvent> voteRemovedKafkaListenerContainerFactory(
+            ConsumerFactory<String, VoteRemovedEvent> voteRemovedConsumerFactory) {
+        ConcurrentKafkaListenerContainerFactory<String, VoteRemovedEvent> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(voteRemovedConsumerFactory);
         return factory;
     }
 }
