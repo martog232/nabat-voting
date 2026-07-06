@@ -33,5 +33,24 @@ spring:
       group-id: nabat-voting-group
       auto-offset-reset: earliest
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_ENDPOINT:http://nabat-zipkin:9411/api/v2/spans}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %clr(%5p) [${spring.application.name},%X{traceId:-},%X{spanId:-}] [%t] %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx"
+
 server:
   port: ${SERVER_PORT:8081}

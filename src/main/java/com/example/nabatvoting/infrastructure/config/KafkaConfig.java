@@ -2,9 +2,7 @@ package com.example.nabatvoting.infrastructure.config;
 
 import com.example.nabatvoting.domain.event.VoteCastEvent;
 import com.example.nabatvoting.domain.event.VoteRemovedEvent;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.json.JsonMapper;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -16,8 +14,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.*;
-import org.springframework.kafka.support.serializer.JsonDeserializer;
-import org.springframework.kafka.support.serializer.JsonSerializer;
+import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
+import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
 
 import org.springframework.kafka.annotation.EnableKafka;
 
@@ -32,12 +30,10 @@ import static com.example.nabatvoting.infrastructure.kafka.KafkaTopics.VOTE_REMO
  * <p>Defines a producer factory that serialises {@link VoteCastEvent}s to JSON
  * and a consumer factory that deserialises them back, along with the
  * {@code vote.cast} topic.  Both serialiser and deserialiser share a
- * dedicated {@link ObjectMapper} that has the {@link JavaTimeModule} registered
+ * dedicated {@link JsonMapper} that has java.
+ * Time support auto-registered
  * so that {@link java.time.Instant} fields are handled correctly.
  *
- * <p>{@link EnableKafka} activates detection of {@code @KafkaListener} methods.
- * {@link org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration} is
- * excluded from the application to prevent conflicts with these explicit beans.
  */
 @Configuration
 @EnableKafka
@@ -53,28 +49,27 @@ public class KafkaConfig {
 
     @Bean
     public NewTopic voteCastTopic() {
-        return TopicBuilder.name(VOTE_CAST).partitions(1).replicas(1).build();
+        return TopicBuilder.name(VOTE_CAST).partitions(1).replicas(3).build();
     }
 
     @Bean
     public NewTopic voteRemovedTopic() {
-        return TopicBuilder.name(VOTE_REMOVED).partitions(1).replicas(1).build();
+        return TopicBuilder.name(VOTE_REMOVED).partitions(1).replicas(3).build();
     }
 
     // --------------------------------------------------------- shared mapper
 
     @Bean
-    public ObjectMapper kafkaObjectMapper() {
-        return new ObjectMapper()
-                .registerModule(new JavaTimeModule())
-                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    public JsonMapper kafkaObjectMapper() {
+        return JsonMapper.builder()
+                .build();
     }
 
     // --------------------------------------------------------------- producer
 
     @Bean
-    public ProducerFactory<String, VoteCastEvent> voteCastProducerFactory(ObjectMapper kafkaObjectMapper) {
-        JsonSerializer<VoteCastEvent> valueSerializer = new JsonSerializer<>(kafkaObjectMapper);
+    public ProducerFactory<String, VoteCastEvent> voteCastProducerFactory(JsonMapper kafkaObjectMapper) {
+        JacksonJsonSerializer<VoteCastEvent> valueSerializer = new JacksonJsonSerializer<>(kafkaObjectMapper);
         valueSerializer.setAddTypeInfo(false);
         return new DefaultKafkaProducerFactory<>(
                 Map.of(
@@ -93,8 +88,8 @@ public class KafkaConfig {
     }
 
     @Bean
-    public ProducerFactory<String, VoteRemovedEvent> voteRemovedProducerFactory(ObjectMapper kafkaObjectMapper) {
-        JsonSerializer<VoteRemovedEvent> valueSerializer = new JsonSerializer<>(kafkaObjectMapper);
+    public ProducerFactory<String, VoteRemovedEvent> voteRemovedProducerFactory(JsonMapper kafkaObjectMapper) {
+        JacksonJsonSerializer<VoteRemovedEvent> valueSerializer = new JacksonJsonSerializer<>(kafkaObjectMapper);
         valueSerializer.setAddTypeInfo(false);
         return new DefaultKafkaProducerFactory<>(
                 Map.of(
@@ -115,9 +110,9 @@ public class KafkaConfig {
     // --------------------------------------------------------------- consumer
 
     @Bean
-    public ConsumerFactory<String, VoteCastEvent> voteCastConsumerFactory(ObjectMapper kafkaObjectMapper) {
-        JsonDeserializer<VoteCastEvent> deserializer =
-                new JsonDeserializer<>(VoteCastEvent.class, kafkaObjectMapper);
+    public ConsumerFactory<String, VoteCastEvent> voteCastConsumerFactory(JsonMapper kafkaObjectMapper) {
+        JacksonJsonDeserializer<VoteCastEvent> deserializer =
+                new JacksonJsonDeserializer<>(VoteCastEvent.class, kafkaObjectMapper);
         deserializer.addTrustedPackages("com.example.nabatvoting.*");
         return new DefaultKafkaConsumerFactory<>(
                 Map.of(
@@ -140,9 +135,9 @@ public class KafkaConfig {
     }
 
     @Bean
-    public ConsumerFactory<String, VoteRemovedEvent> voteRemovedConsumerFactory(ObjectMapper kafkaObjectMapper) {
-        JsonDeserializer<VoteRemovedEvent> deserializer =
-                new JsonDeserializer<>(VoteRemovedEvent.class, kafkaObjectMapper);
+    public ConsumerFactory<String, VoteRemovedEvent> voteRemovedConsumerFactory(JsonMapper kafkaObjectMapper) {
+        JacksonJsonDeserializer<VoteRemovedEvent> deserializer =
+                new JacksonJsonDeserializer<>(VoteRemovedEvent.class, kafkaObjectMapper);
         deserializer.addTrustedPackages("com.example.nabatvoting.*");
         return new DefaultKafkaConsumerFactory<>(
                 Map.of(

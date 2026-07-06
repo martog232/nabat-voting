@@ -19,6 +19,12 @@ services:
   kafka:
     image: apache/kafka:latest
     container_name: nabat-voting-kafka
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     ports:
       - "9092:9092"
     environment:
@@ -41,7 +47,7 @@ services:
       postgres:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/nabat_voting_db
       SPRING_DATASOURCE_USERNAME: nabat_voting_user
