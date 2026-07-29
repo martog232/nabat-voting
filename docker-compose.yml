@@ -26,16 +26,30 @@ services:
       retries: 10
       start_period: 30s
     ports:
-      - "9092:9092"
+      # Host tooling uses the EXTERNAL listener; containers reach kafka:9092 directly.
+      - "29092:29092"
     environment:
       KAFKA_NODE_ID: "1"
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # Two listeners: one advertised as `kafka:9092` for containers on this network,
+      # one as `localhost:29092` for tools running on the host.
+      #
+      # This previously advertised only `PLAINTEXT://localhost:9092` while the app
+      # connected via `kafka:9092`. The bootstrap connection succeeded, then the broker
+      # handed back `localhost:9092` as the address of the partition leader — which,
+      # resolved from inside the app container, is the app itself. Every subsequent
+      # produce/fetch therefore failed.
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      # All three internal topics must be single-replica on a one-broker cluster,
+      # otherwise their creation fails and takes consumer group coordination with it.
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       CLUSTER_ID: DWKW8vl4RI6tPZGCbhhHVg
 
   nabat-voting-app:
@@ -54,11 +68,17 @@ services:
       SPRING_DATASOURCE_PASSWORD: nabat_voting_password
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SERVER_PORT: 8081
-      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+      # Must match nabat-app's JWT_SECRET — see .env.example.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required and must match nabat-app. Generate with `openssl rand -base64 48` and set it in .env}
+      # Remote debugging is opt-in: an open JDWP port is arbitrary code execution.
+      # Enable for a local session with:  NABAT_VOTING_DEBUG_OPTS='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5006' docker compose up
+      JAVA_TOOL_OPTIONS: ${NABAT_VOTING_DEBUG_OPTS:-}
 
     ports:
       - "8081:8081"
-      - "5005:5005"
+      # Debug port bound to loopback only, and only useful when the agent is enabled above.
+      # 5006 keeps it clear of nabat-app's 5005 (as documented in ARCHITECTURE.md).
+      - "127.0.0.1:5006:5006"
     restart: unless-stopped
 
 volumes:

@@ -1,5 +1,6 @@
 package com.example.nabatvoting.infrastructure.persistence;
 
+import com.example.nabatvoting.domain.model.VoteType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -17,12 +18,27 @@ public interface VoteJpaRepository extends JpaRepository<VoteJpaEntity, UUID> {
     @Query("SELECT DISTINCT v.alertId FROM VoteJpaEntity v")
     List<String> findDistinctAlertIds();
 
-    @Query("SELECT COUNT(v) FROM VoteJpaEntity v WHERE v.alertId = :alertId AND v.voteType = 'UPVOTE'")
-    int countUpvotesByAlertId(@Param("alertId") String alertId);
+    /**
+     * All three tallies in one round-trip. Replaces the three separate
+     * {@code COUNT(*)} queries this repository used to expose, which meant every
+     * projection recompute — i.e. every vote event — issued three statements
+     * where one suffices.
+     *
+     * <p>Vote types with no rows are simply absent from the result; the caller
+     * defaults them to zero.
+     */
+    @Query("""
+        SELECT v.voteType AS voteType, COUNT(v) AS total
+        FROM VoteJpaEntity v
+        WHERE v.alertId = :alertId
+        GROUP BY v.voteType
+        """)
+    List<VoteTypeTally> tallyByAlertId(@Param("alertId") String alertId);
 
-    @Query("SELECT COUNT(v) FROM VoteJpaEntity v WHERE v.alertId = :alertId AND v.voteType = 'DOWNVOTE'")
-    int countDownvotesByAlertId(@Param("alertId") String alertId);
+    /** Projection for {@link #tallyByAlertId(String)}. */
+    interface VoteTypeTally {
+        VoteType getVoteType();
 
-    @Query("SELECT COUNT(v) FROM VoteJpaEntity v WHERE v.alertId = :alertId AND v.voteType = 'CONFIRM'")
-    int countConfirmationsByAlertId(@Param("alertId") String alertId);
+        long getTotal();
+    }
 }

@@ -102,20 +102,29 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
+        <!--
+          Jackson 2 (com.fasterxml.*) is required by jjwt-jackson, which has not moved to
+          Jackson 3. It is kept for that reason only — application code uses Jackson 3
+          (tools.jackson.*), which Spring Boot 4 brings in via spring-boot-starter-web.
+
+          The Jackson 2 jackson-datatype-jsr310 module was dropped: no application code
+          uses Jackson 2 types, and jjwt does not need java.time support from it.
+
+          Neither is version-pinned here — both are governed by the Boot BOM. Pinning
+          tools.jackson.core:jackson-databind to 3.1.2 explicitly overrode the managed
+          version, so a Boot upgrade would silently leave Jackson behind.
+
+          NOTE: nabat-app is on Boot 3.4.1 (Jackson 2) while this service is on 4.0.6
+          (Jackson 3). Aligning the two is tracked separately.
+        -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
         <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
-        </dependency>
-
-        <dependency>
             <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>3.1.2</version>
         </dependency>
 
         <dependency>

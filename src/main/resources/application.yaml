@@ -1,5 +1,8 @@
 jwt:
-  secret: ${JWT_SECRET:change-me-before-production-use-a-real-secret-at-least-32-chars}
+  # No default: refuses to start without a real JWT_SECRET (see JwtTokenProvider).
+  # Must be the SAME value nabat-app uses, or tokens minted there will not validate here.
+  # Generate with: openssl rand -base64 48
+  secret: ${JWT_SECRET:}
   expiration: ${JWT_EXPIRATION:86400000}
   refresh-expiration: ${JWT_REFRESH_EXPIRATION:604800000}
 
@@ -28,10 +31,19 @@ spring:
     locations: classpath:db/migration
 
   kafka:
-    bootstrap-servers: localhost:9092
+    # Env-driven like every other setting here. This was the one hardcoded value, so a
+    # containerised run could not point at its broker without editing the jar.
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:9092}
     consumer:
-      group-id: nabat-voting-group
+      group-id: ${SPRING_KAFKA_CONSUMER_GROUP_ID:nabat-voting-group}
       auto-offset-reset: earliest
+
+nabat:
+  kafka:
+    # Must not exceed the broker count. Defaults to 1 because every environment in this
+    # repository runs a single broker; raise it in production.
+    topic-replicas: ${NABAT_KAFKA_TOPIC_REPLICAS:1}
+    topic-partitions: ${NABAT_KAFKA_TOPIC_PARTITIONS:1}
 
 management:
   endpoints:

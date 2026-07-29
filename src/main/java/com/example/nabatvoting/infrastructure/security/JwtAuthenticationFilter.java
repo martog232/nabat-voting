@@ -19,6 +19,8 @@ import java.util.List;
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    private static final String BEARER_PREFIX = "Bearer ";
+
     private final JwtTokenProvider jwtTokenProvider;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider) {
@@ -34,17 +36,28 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             String jwt = getJwtFromRequest(request);
 
-            if (StringUtils.hasText(jwt) && jwtTokenProvider.validateToken(jwt)) {
-                String userId = jwtTokenProvider.getUserIdFromToken(jwt);
-
-                var authentication = new UsernamePasswordAuthenticationToken(
-                        userId, null, List.of(new SimpleGrantedAuthority("ROLE_USER"))
+            if (StringUtils.hasText(jwt)) {
+                jwtTokenProvider.authenticate(jwt).ifPresentOrElse(
+                        user -> {
+                            var authentication = new UsernamePasswordAuthenticationToken(
+                                    user.userId(),
+                                    null,
+                                    List.of(new SimpleGrantedAuthority("ROLE_" + user.role()))
+                            );
+                            authentication.setDetails(
+                                    new WebAuthenticationDetailsSource().buildDetails(request));
+                            SecurityContextHolder.getContext().setAuthentication(authentication);
+                        },
+                        // Debug, not warn: an expired token on a normal client refresh cycle is
+                        // routine, and logging at warn on attacker-supplied input is a log-flooding
+                        // vector. The request continues unauthenticated and the entry point 401s.
+                        () -> logger.debug("Rejected JWT: invalid signature, wrong token type, or missing userId")
                 );
-                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authentication);
             }
         } catch (Exception ex) {
+            // Never leave partial authentication state behind.
             SecurityContextHolder.clearContext();
+            logger.debug("Authentication failed", ex);
         }
 
         filterChain.doFilter(request, response);
@@ -52,8 +65,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private String getJwtFromRequest(HttpServletRequest request) {
         String bearerToken = request.getHeader("Authorization");
-        if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
-            return bearerToken.substring(7);
+        if (StringUtils.hasText(bearerToken) && bearerToken.startsWith(BEARER_PREFIX)) {
+            return bearerToken.substring(BEARER_PREFIX.length());
         }
         return null;
     }

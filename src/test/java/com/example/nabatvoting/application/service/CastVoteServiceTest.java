@@ -9,6 +9,7 @@ import com.example.nabatvoting.domain.model.VoteId;
 import com.example.nabatvoting.domain.model.VoteType;
 import com.example.nabatvoting.domain.model.VoterId;
 import com.example.nabatvoting.domain.model.AlertCredibility;
+import com.example.nabatvoting.domain.model.VoteCounts;
 import com.example.nabatvoting.domain.port.in.CastVoteCommand;
 import com.example.nabatvoting.domain.port.in.CastVoteUseCase;
 import com.example.nabatvoting.domain.port.out.CredibilityProjectionStore;
@@ -38,6 +39,9 @@ class CastVoteServiceTest {
         voteEventPublisher = mock(VoteEventPublisher.class);
         credibilityProjectionStore = mock(CredibilityProjectionStore.class);
         service = new CastVoteService(voteRepository, voteEventPublisher, credibilityProjectionStore);
+        // castVote/removeVote now read the tallies back from the write model inside the
+        // mutating transaction, so this must answer for every mutating test.
+        when(voteRepository.countsFor(any())).thenReturn(VoteCounts.EMPTY);
     }
 
     @Test
@@ -53,8 +57,38 @@ class CastVoteServiceTest {
         assertThat(stats.confirmations()).isEqualTo(2);
         // 3 - 1 + (2 * 2)
         assertThat(stats.credibilityScore()).isEqualTo(6);
-        // Stats must come from the read-model, never by aggregating votes.
-        verify(voteRepository, never()).countUpvotes(any());
+        // The stats *endpoint* reads the projection; only the mutating paths aggregate
+        // the write model, and they do so precisely to give the caller read-your-writes.
+        verify(voteRepository, never()).countsFor(any());
+    }
+
+    @Test
+    void castVote_returnsTalliesReadFromTheWriteModel() {
+        CastVoteCommand command = new CastVoteCommand(
+                new AlertId("alert-fresh"), new VoterId("voter-fresh"), VoteType.UPVOTE);
+        when(voteRepository.countsFor(new AlertId("alert-fresh")))
+                .thenReturn(new VoteCounts(4, 1, 2));
+
+        CastVoteUseCase.VoteStats stats = service.castVote(command).stats();
+
+        assertThat(stats.upvotes()).isEqualTo(4);
+        // 4 - 1 + (2 * 2)
+        assertThat(stats.credibilityScore()).isEqualTo(7);
+        // Deliberately NOT the projection: it is updated off a Kafka round-trip and at
+        // this point still holds the pre-vote counts.
+        verify(credibilityProjectionStore, never()).findByAlertId(any());
+    }
+
+    @Test
+    void removeVote_returnsTalliesAfterRemoval() {
+        when(voteRepository.countsFor(new AlertId("alert-rm")))
+                .thenReturn(new VoteCounts(1, 0, 0));
+
+        CastVoteUseCase.VoteStats stats =
+                service.removeVote(new AlertId("alert-rm"), new VoterId("voter-rm"));
+
+        assertThat(stats.upvotes()).isEqualTo(1);
+        assertThat(stats.credibilityScore()).isEqualTo(1);
     }
 
     @Test
