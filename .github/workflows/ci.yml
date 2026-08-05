@@ -1,13 +1,24 @@
 name: CI
 
+# `main`, not `master`. This repository's default branch is main and no master branch exists,
+# so the previous triggers matched nothing: the workflow had never run on a single push or
+# pull request. It merely looked like CI existed.
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/nabat-voting-app
 
 jobs:
-  build:
+  test:
+    name: Build and test
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -22,12 +33,87 @@ jobs:
     - name: Build and test
       run: ./mvnw verify -B
 
-    - name: Docker build
-      run: |
-        docker build -t nabat-voting-app:${{ github.sha }} .
-        docker tag nabat-voting-app:${{ github.sha }} nabat-voting-app:latest
+    - name: Upload surefire reports on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: surefire-reports
+        path: target/surefire-reports/
+        retention-days: 7
+
+  lint:
+    name: Static analysis
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
 
     - name: Lint Dockerfile
       uses: hadolint/hadolint-action@v3
       with:
         dockerfile: Dockerfile
+
+  image:
+    name: Build and publish image
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GHCR
+      if: github.event_name == 'push'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and push
+      id: build
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        # This used to `docker build` and then discard the result. nabat-app's deploy workflow
+        # expected to pull a nabat-voting image that had never been published anywhere.
+        push: ${{ github.event_name == 'push' }}
+        load: ${{ github.event_name != 'push' }}
+        tags: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Scan image for vulnerabilities
+      uses: aquasecurity/trivy-action@0.28.0
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        # Reports without blocking for now. Worth noting this image runs as root and is built
+        # on the full glibc JRE, unlike nabat-app's non-root Alpine image — so it has more to
+        # find here than there.
+        exit-code: '0'
+        format: table
+
+    - name: Report the tag nabat-app should deploy
+      if: github.event_name == 'push'
+      # Cross-repo coordination is manual on purpose. nabat-app's deploy workflow no longer
+      # guesses this tag from its own commit SHA — a value that named no build which had ever
+      # existed. Take the tag printed here and pass it as `voting_image_tag` when dispatching
+      # nabat-app's Deploy, or pin it in that chart's values.yaml.
+      run: |
+        {
+          echo "### Published image"
+          echo '```'
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo "digest: ${{ steps.build.outputs.digest }}"
+          echo '```'
+          echo "Deploy with: nabat-app → Actions → Deploy → voting_image_tag = \`${{ github.sha }}\`"
+          echo ""
+          echo "> The vote wire contract is shared. nabat-app and nabat-voting must be deployed"
+          echo "> together whenever it changes, or voting breaks against the older counterpart."
+        } >> "$GITHUB_STEP_SUMMARY"

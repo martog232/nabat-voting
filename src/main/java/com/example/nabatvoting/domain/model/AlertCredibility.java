@@ -18,10 +18,19 @@ public record AlertCredibility(AlertId alertId, int upvotes, int downvotes, int 
 
     /** Empty projection for an alert that has not received any votes yet. */
     public static AlertCredibility empty(AlertId alertId) {
-        return new AlertCredibility(alertId, 0, 0, 0);
+        return of(alertId, VoteCounts.EMPTY);
     }
 
+    public static AlertCredibility of(AlertId alertId, VoteCounts counts) {
+        return new AlertCredibility(alertId, counts.upvotes(), counts.downvotes(), counts.confirmations());
+    }
+
+    public VoteCounts counts() {
+        return new VoteCounts(upvotes, downvotes, confirmations);
+    }
+
+    /** Delegates to {@link VoteCounts} so the formula lives in exactly one place. */
     public int credibilityScore() {
-        return upvotes - downvotes + (confirmations * 2);
+        return counts().credibilityScore();
     }
 }

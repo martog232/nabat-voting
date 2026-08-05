@@ -2,16 +2,18 @@ package com.example.nabatvoting.infrastructure.persistence;
 
 import com.example.nabatvoting.domain.model.AlertId;
 import com.example.nabatvoting.domain.model.Vote;
+import com.example.nabatvoting.domain.model.VoteCounts;
 import com.example.nabatvoting.domain.model.VoteId;
+import com.example.nabatvoting.domain.model.VoteType;
 import com.example.nabatvoting.domain.model.VoterId;
 import com.example.nabatvoting.domain.port.out.VoteRepository;
-import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
-@Primary
 @Component
 public class PostgresVoteRepositoryAdapter implements VoteRepository {
 
@@ -45,18 +47,21 @@ public class PostgresVoteRepositoryAdapter implements VoteRepository {
     }
 
     @Override
-    public int countUpvotes(AlertId alertId) {
-        return jpaRepository.countUpvotesByAlertId(alertId.value());
+    public VoteCounts countsFor(AlertId alertId) {
+        Map<VoteType, Long> tallies = jpaRepository.tallyByAlertId(alertId.value()).stream()
+                .collect(Collectors.toMap(
+                        VoteJpaRepository.VoteTypeTally::getVoteType,
+                        VoteJpaRepository.VoteTypeTally::getTotal));
+
+        return new VoteCounts(
+                countOf(tallies, VoteType.UPVOTE),
+                countOf(tallies, VoteType.DOWNVOTE),
+                countOf(tallies, VoteType.CONFIRM)
+        );
     }
 
-    @Override
-    public int countDownvotes(AlertId alertId) {
-        return jpaRepository.countDownvotesByAlertId(alertId.value());
-    }
-
-    @Override
-    public int countConfirmations(AlertId alertId) {
-        return jpaRepository.countConfirmationsByAlertId(alertId.value());
+    private static int countOf(Map<VoteType, Long> tallies, VoteType type) {
+        return Math.toIntExact(tallies.getOrDefault(type, 0L));
     }
 
     @Override
