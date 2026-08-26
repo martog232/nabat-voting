@@ -45,6 +45,19 @@ nabat:
     topic-replicas: ${NABAT_KAFKA_TOPIC_REPLICAS:1}
     topic-partitions: ${NABAT_KAFKA_TOPIC_PARTITIONS:1}
 
+  outbox:
+    # The delay a vote waits before its projection catches up, so short. Polling an idle
+    # table costs one index lookup: the index is partial, over pending rows only.
+    poll-interval: ${NABAT_OUTBOX_POLL_INTERVAL:PT1S}
+    batch-size: ${NABAT_OUTBOX_BATCH_SIZE:100}
+    # A send slower than this counts as failed and is retried. Nothing is lost either way:
+    # the row stays pending until the broker acknowledges it.
+    send-timeout: ${NABAT_OUTBOX_SEND_TIMEOUT:PT10S}
+    # How long a published row is kept as the record of what was sent, and how often the
+    # relay drops the ones past it.
+    retention: ${NABAT_OUTBOX_RETENTION:P7D}
+    purge-interval: ${NABAT_OUTBOX_PURGE_INTERVAL:PT1H}
+
 management:
   endpoints:
     web:

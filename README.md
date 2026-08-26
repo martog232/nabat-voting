@@ -20,9 +20,10 @@ src/main/java/com/example/nabatvoting/
 │   ├── service/        # CastVoteService (use-case implementation)
 │   └── projection/     # CredibilityProjection (read model)
 └── infrastructure/
-    ├── kafka/          # KafkaVoteEventPublisher, KafkaVoteEventConsumer, KafkaTopics
+    ├── kafka/          # KafkaVoteEventConsumer, KafkaTopics
+    ├── outbox/         # OutboxVoteEventPublisher, OutboxRelay (events leave via a table)
     ├── persistence/    # PostgresVoteRepositoryAdapter, VoteJpaEntity, VoteJpaRepository
-    └── config/         # KafkaConfig
+    └── config/         # KafkaConfig, SchedulingConfig
 ```
 
 See [docs/architecture.md](docs/architecture.md) for a detailed description.
@@ -59,6 +60,15 @@ See [docs/architecture.md](docs/architecture.md) for a detailed description.
 |----------|---------|-------------|
 | `spring.kafka.bootstrap-servers` | `localhost:9092` | Kafka broker address |
 | `spring.kafka.consumer.group-id` | `nabat-voting-group` | Consumer group for projection updates |
+| `nabat.outbox.poll-interval` | `PT1S` | How often the relay looks for events to send |
+| `nabat.outbox.batch-size` | `100` | Rows claimed per pass |
+| `nabat.outbox.send-timeout` | `PT10S` | A slower send counts as failed and is retried |
+| `nabat.outbox.retention` | `P7D` | How long published rows are kept before being purged |
+| `nabat.outbox.purge-interval` | `PT1H` | How often the purge runs |
+
+Events are not sent to Kafka directly. They are written to `outbox_event` in the same transaction
+as the vote, and `OutboxRelay` sends the committed rows — see
+[docs/architecture.md](docs/architecture.md) for why.
 
 ## Testing
 

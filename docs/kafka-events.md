@@ -49,6 +49,18 @@ All events for a given alert are published with `alertId` as the Kafka message k
 that votes for the same alert are always delivered in order to the same partition / consumer
 instance.
 
+## Delivery guarantees
+
+Events are not sent from the transaction that writes the vote.  They are written to the
+`outbox_event` table in that transaction and sent afterwards by `OutboxRelay`, which reads only
+committed rows — so an event can never describe a vote that is not there, and a crash before the
+send does not lose it.
+
+The price is at-least-once delivery: the send and the row's `published_at` update are not atomic,
+so a crash between them re-sends.  Consumers must be idempotent.  This service's own consumer
+recomputes each alert's counts from the write model rather than applying deltas, which is what
+makes a redelivery harmless.
+
 ## Local Development
 
 ### Running Kafka with Docker Compose

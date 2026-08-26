@@ -19,10 +19,8 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
-import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
 import org.springframework.util.backoff.FixedBackOff;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -34,9 +32,9 @@ import static com.example.nabatvoting.infrastructure.kafka.KafkaTopics.VOTE_REMO
 /**
  * Kafka infrastructure for the voting module.
  *
- * <p>Producer, consumer and listener-container beans for the two event types are
- * built by shared generic helpers. Each type previously had its own hand-written
- * copy of all three — six near-identical beans differing only in a type parameter.
+ * <p>Consumer and listener-container beans for the two event types are built by shared
+ * generic helpers. Each type previously had its own hand-written copy of all three — six
+ * near-identical beans differing only in a type parameter.
  *
  * <p>The {@link JsonMapper} is Jackson 3 ({@code tools.jackson}), which auto-registers
  * java.time support via the service loader, so {@link java.time.Instant} fields on the
@@ -101,38 +99,34 @@ public class KafkaConfig {
         return JsonMapper.builder().build();
     }
 
-    // --------------------------------------------------------------- producers
+    // ---------------------------------------------------------------- producer
 
+    /**
+     * The one producer, used by the outbox relay.
+     *
+     * <p>Its values are strings because the relay sends the JSON already stored in the
+     * outbox row. There used to be a template per event type, each with a Jackson
+     * serializer; serialising at send time is precisely what the outbox moved to commit
+     * time, and the bytes are the same either way because the same {@link JsonMapper}
+     * writes them.
+     */
     @Bean
-    public KafkaTemplate<String, VoteCastEvent> voteCastKafkaTemplate(JsonMapper mapper) {
-        return new KafkaTemplate<>(producerFactory(mapper));
+    public KafkaTemplate<String, String> outboxKafkaTemplate() {
+        return new KafkaTemplate<>(new DefaultKafkaProducerFactory<>(
+                producerProperties(), new StringSerializer(), new StringSerializer()));
     }
 
-    @Bean
-    public KafkaTemplate<String, VoteRemovedEvent> voteRemovedKafkaTemplate(JsonMapper mapper) {
-        return new KafkaTemplate<>(producerFactory(mapper));
-    }
-
-    private <T> ProducerFactory<String, T> producerFactory(JsonMapper mapper) {
-        JacksonJsonSerializer<T> valueSerializer = new JacksonJsonSerializer<>(mapper);
-        // The consumer deserialises into a known concrete type, so embedding type
-        // headers would only add bytes.
-        valueSerializer.setAddTypeInfo(false);
-
-        return new DefaultKafkaProducerFactory<>(
-                Map.of(
-                        ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
-                        ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
-                        // Wait for all in-sync replicas, and let the client retry —
-                        // otherwise a transient leader election silently drops the event
-                        // and the projection never catches up.
-                        ProducerConfig.ACKS_CONFIG, "all",
-                        ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true,
-                        ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 30_000,
-                        ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 10_000
-                ),
-                new StringSerializer(),
-                valueSerializer
+    private Map<String, Object> producerProperties() {
+        return Map.of(
+                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
+                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
+                // Wait for all in-sync replicas, and let the client retry —
+                // otherwise a transient leader election silently drops the event
+                // and the projection never catches up.
+                ProducerConfig.ACKS_CONFIG, "all",
+                ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true,
+                ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 30_000,
+                ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 10_000
         );
     }
 
