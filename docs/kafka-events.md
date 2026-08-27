@@ -4,7 +4,8 @@
 
 | Topic | Key | Value type | Partitions | Description |
 |-------|-----|------------|------------|-------------|
-| `vote.cast` | `alertId` | `VoteCastEvent` (JSON) | 1 | Published whenever a vote is cast on an alert |
+| `vote.cast` | `alertId` | `VoteCastEvent` (JSON) | 1 | Published whenever a vote is cast or changed |
+| `vote.removed` | `alertId` | `VoteRemovedEvent` (JSON) | 1 | Published when a voter retracts their vote |
 
 ## VoteCastEvent Schema
 
@@ -13,8 +14,14 @@
   "voteId":   "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "alertId":  "alert-123",
   "voterId":  "user-456",
-  "positive": true,
-  "castAt":   "2024-11-15T10:30:00Z"
+  "voteType": "CONFIRM",
+  "castAt":   "2024-11-15T10:30:00Z",
+  "tallies":  {
+    "upvotes":         3,
+    "downvotes":       1,
+    "confirmations":   2,
+    "credibilityScore": 6
+  }
 }
 ```
 
@@ -23,8 +30,28 @@
 | `voteId` | UUID (string) | Unique identifier of the vote |
 | `alertId` | string | Identifier of the alert being voted on |
 | `voterId` | string | Identifier of the voter |
-| `positive` | boolean | `true` = credible, `false` = not credible |
+| `voteType` | `UPVOTE` \| `DOWNVOTE` \| `CONFIRM` | What was cast |
 | `castAt` | ISO-8601 timestamp | UTC time at which the vote was cast |
+| `tallies` | object | The alert's counts **as of this vote**, read from the write model in the same transaction |
+
+## VoteRemovedEvent Schema
+
+Same `tallies`, with `removedAt` in place of `castAt` and no `voteId` or `voteType` — the
+projection only needs to know which alert changed and to what.
+
+## Why the tallies are on the event
+
+A consumer that keeps its own projection would otherwise have to apply a delta, which
+double-counts the second time an event is delivered, or call back for the stats, which is a
+synchronous hop onto a projection that is itself asynchronous. Absolute values make applying
+the event idempotent: writing them twice is the same write.
+
+`credibilityScore` is derived (`upvotes - downvotes + 2 × confirmations`) but travels
+anyway, because `VoteCounts` is the single definition of that formula and a consumer
+recomputing it would be a copy free to drift.
+
+Ordering is per alert, since that is the message key. Two events for one alert arrive in the
+order they were written; nothing depends on ordering *between* alerts.
 
 ## Serialisation
 

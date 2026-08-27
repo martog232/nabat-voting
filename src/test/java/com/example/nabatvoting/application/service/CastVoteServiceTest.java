@@ -2,6 +2,7 @@ package com.example.nabatvoting.application.service;
 
 import com.example.nabatvoting.domain.event.VoteCastEvent;
 import com.example.nabatvoting.domain.event.VoteRemovedEvent;
+import com.example.nabatvoting.domain.event.VoteTallies;
 import com.example.nabatvoting.domain.exception.DuplicateVoteException;
 import com.example.nabatvoting.domain.model.AlertId;
 import com.example.nabatvoting.domain.model.Vote;
@@ -126,6 +127,48 @@ class CastVoteServiceTest {
         assertThat(publishedEvent.voterId()).isEqualTo("voter-A");
         assertThat(publishedEvent.voteType()).isEqualTo(VoteType.UPVOTE);
         assertThat(publishedEvent.voteId()).isEqualTo(returnedId.value());
+    }
+
+    /**
+     * The tallies on the event are the ones the caller was told, from one read of the write
+     * model. A consumer elsewhere applies them as absolute values, so a second delivery is
+     * the same write rather than a double count.
+     */
+    @Test
+    void theEventCarriesTheTalliesAsOfTheVote() {
+        AlertId alertId = new AlertId("alert-tallies");
+        when(voteRepository.countsFor(alertId)).thenReturn(new VoteCounts(3, 1, 2));
+
+        CastVoteUseCase.CastVoteResult result = service.castVote(new CastVoteCommand(
+                alertId, new VoterId("voter-T"), VoteType.CONFIRM));
+
+        ArgumentCaptor<VoteCastEvent> eventCaptor = ArgumentCaptor.forClass(VoteCastEvent.class);
+        verify(voteEventPublisher).publish(eventCaptor.capture());
+        VoteTallies tallies = eventCaptor.getValue().tallies();
+
+        assertThat(tallies.upvotes()).isEqualTo(3);
+        assertThat(tallies.downvotes()).isEqualTo(1);
+        assertThat(tallies.confirmations()).isEqualTo(2);
+        // 3 - 1 + (2 * 2), carried rather than left to the consumer to recompute.
+        assertThat(tallies.credibilityScore()).isEqualTo(6);
+
+        assertThat(result.stats().credibilityScore())
+                .as("the caller's response and the event are one read, not two")
+                .isEqualTo(6);
+        verify(voteRepository, times(1)).countsFor(alertId);
+    }
+
+    @Test
+    void theRemovalEventCarriesTheTalliesAfterTheRemoval() {
+        AlertId alertId = new AlertId("alert-removal-tallies");
+        when(voteRepository.countsFor(alertId)).thenReturn(new VoteCounts(1, 0, 0));
+
+        service.removeVote(alertId, new VoterId("voter-T"));
+
+        ArgumentCaptor<VoteRemovedEvent> eventCaptor = ArgumentCaptor.forClass(VoteRemovedEvent.class);
+        verify(voteEventPublisher).publishRemoved(eventCaptor.capture());
+
+        assertThat(eventCaptor.getValue().tallies().credibilityScore()).isEqualTo(1);
     }
 
     @Test
