@@ -29,7 +29,25 @@
     <properties>
         <java.version>21</java.version>
         <jjwt.version>0.12.5</jjwt.version>
+        <avro.version>1.12.0</avro.version>
+        <!--
+            Confluent's serialisers are versioned against Kafka: the 8.x line targets the
+            4.x clients this Boot version brings. nabat-app is on Boot 3.4 and therefore on
+            the 7.x line. The two majors interoperate because the wire format they write is
+            the same — a magic byte, a schema id, then Avro — which is the whole point of a
+            registry: the contract is the schema, not the library that wrote it.
+        -->
+        <confluent.version>8.0.0</confluent.version>
     </properties>
+
+    <repositories>
+        <!-- Confluent's serialisers are not on Maven Central. -->
+        <repository>
+            <id>confluent</id>
+            <url>https://packages.confluent.io/maven/</url>
+        </repository>
+    </repositories>
+
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -49,6 +67,22 @@
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
+        </dependency>
+
+        <!--
+            Avro, and Confluent's serialiser for it. The schema in src/main/avro is the
+            contract; the generated class is what the code holds; the registry is what makes
+            an incompatible change fail before it reaches a broker.
+        -->
+        <dependency>
+            <groupId>org.apache.avro</groupId>
+            <artifactId>avro</artifactId>
+            <version>${avro.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.confluent</groupId>
+            <artifactId>kafka-avro-serializer</artifactId>
+            <version>${confluent.version}</version>
         </dependency>
 
         <dependency>
@@ -180,6 +214,30 @@
 
     <build>
         <plugins>
+            <!--
+                Generates the event class from src/main/avro. The schema file is the source
+                of truth and the class is a build artefact, so the two cannot drift; nabat-app
+                generates its own copy from the identical schema.
+            -->
+            <plugin>
+                <groupId>org.apache.avro</groupId>
+                <artifactId>avro-maven-plugin</artifactId>
+                <version>${avro.version}</version>
+                <executions>
+                    <execution>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>schema</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDirectory>${project.basedir}/src/main/avro</sourceDirectory>
+                            <!-- java.lang.String rather than Avro's Utf8, which is a
+                                 CharSequence and infects every caller that touches it. -->
+                            <stringType>String</stringType>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

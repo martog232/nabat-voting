@@ -6,17 +6,23 @@ import com.example.nabatvoting.domain.model.VoterId;
 import com.example.nabatvoting.domain.port.in.CastVoteCommand;
 import com.example.nabatvoting.domain.port.in.CastVoteUseCase;
 import com.example.nabatvoting.infrastructure.kafka.KafkaTopics;
-import com.example.nabatvoting.infrastructure.kafka.VoteChangedMessage;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.transaction.support.TransactionTemplate;
-import tools.jackson.databind.json.JsonMapper;
+import io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig;
+import io.confluent.kafka.serializers.KafkaAvroDeserializer;
+import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
+import org.example.nabat.events.vote.VoteChangeType;
+import org.example.nabat.events.vote.VoteChanged;
+import org.example.nabat.events.vote.VoteKind;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -50,8 +56,23 @@ class OutboxIntegrationTest {
     @Autowired
     private TransactionTemplate transactionTemplate;
 
-    @Autowired
-    private JsonMapper mapper;
+    /**
+     * Reads a stored payload back the way a consumer would: schema id first, then Avro.
+     *
+     * <p>Pointed at the same {@code mock://} scope the application context uses, so it
+     * resolves the id the producer wrote rather than a schema this test brought along.
+     */
+    @Value("${nabat.schema-registry.url}")
+    private String schemaRegistryUrl;
+
+    private VoteChanged readPayload(OutboxEventJpaEntity row) {
+        try (KafkaAvroDeserializer deserializer = new KafkaAvroDeserializer()) {
+            deserializer.configure(Map.of(
+                    AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG, schemaRegistryUrl,
+                    KafkaAvroDeserializerConfig.SPECIFIC_AVRO_READER_CONFIG, true), false);
+            return (VoteChanged) deserializer.deserialize(row.getTopic(), row.getPayload());
+        }
+    }
 
     private List<OutboxEventJpaEntity> rowsFor(String alertId) {
         return outbox.findAll().stream()
@@ -86,17 +107,18 @@ class OutboxIntegrationTest {
         assertThat(row.getPublishedAt()).isNull();
 
         // The stored bytes are the bytes that go on the wire, so a payload that cannot be
-        // read back is a permanently undeliverable row. Reading it back is cheap insurance.
-        VoteChangedMessage message = mapper.readValue(row.getPayload(), VoteChangedMessage.class);
-        assertThat(message.changeType()).isEqualTo(VoteChangedMessage.ChangeType.CAST);
-        assertThat(message.alertId()).isEqualTo(alertId);
-        assertThat(message.voterId()).isEqualTo(voter.value());
-        assertThat(message.voteType()).isEqualTo(VoteType.UPVOTE);
-        assertThat(message.occurredAt()).isNotNull();
+        // read back is a permanently undeliverable row. Reading it back is cheap insurance —
+        // and with Avro it also proves the schema id in front of the payload resolves.
+        VoteChanged message = readPayload(row);
+        assertThat(message.getChangeType()).isEqualTo(VoteChangeType.CAST);
+        assertThat(message.getAlertId()).isEqualTo(alertId);
+        assertThat(message.getVoterId()).isEqualTo(voter.value());
+        assertThat(message.getVoteType()).isEqualTo(VoteKind.UPVOTE);
+        assertThat(message.getOccurredAt()).isNotNull();
         // The nested tallies are the part a consumer elsewhere actually applies, so their
         // surviving the round trip is worth an assertion rather than an assumption.
-        assertThat(message.tallies().upvotes()).isEqualTo(1);
-        assertThat(message.tallies().credibilityScore()).isEqualTo(1);
+        assertThat(message.getTallies().getUpvotes()).isEqualTo(1);
+        assertThat(message.getTallies().getCredibilityScore()).isEqualTo(1);
 
         assertThat(rowsFor(alertId)).isEmpty();
         assertThat(castVoteUseCase.getUserVote(new AlertId(alertId), voter)).isEmpty();
@@ -159,7 +181,7 @@ class OutboxIntegrationTest {
                 .allSatisfy(row -> assertThat(row.getTopic()).isEqualTo(KafkaTopics.VOTE_CHANGED))
                 .extracting(OutboxEventJpaEntity::getEventType)
                 .containsExactlyInAnyOrder(
-                    VoteChangedMessage.ChangeType.CAST.name(),
-                    VoteChangedMessage.ChangeType.REMOVED.name());
+                    VoteChangeType.CAST.name(),
+                    VoteChangeType.REMOVED.name());
     }
 }

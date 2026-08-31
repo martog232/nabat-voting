@@ -37,14 +37,14 @@ public class OutboxRelay {
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
     private final OutboxEventJpaRepository outbox;
-    private final KafkaTemplate<String, String> outboxKafkaTemplate;
+    private final KafkaTemplate<String, byte[]> outboxKafkaTemplate;
     private final TransactionTemplate transactionTemplate;
     private final int batchSize;
     private final Duration sendTimeout;
     private final Duration retention;
 
     public OutboxRelay(OutboxEventJpaRepository outbox,
-                       KafkaTemplate<String, String> outboxKafkaTemplate,
+                       KafkaTemplate<String, byte[]> outboxKafkaTemplate,
                        TransactionTemplate transactionTemplate,
                        @Value("${nabat.outbox.batch-size:100}") int batchSize,
                        @Value("${nabat.outbox.send-timeout:PT10S}") Duration sendTimeout,

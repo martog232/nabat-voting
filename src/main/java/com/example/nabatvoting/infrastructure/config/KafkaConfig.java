@@ -1,11 +1,15 @@
 package com.example.nabatvoting.infrastructure.config;
 
-import com.example.nabatvoting.infrastructure.kafka.VoteChangedMessage;
+import io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig;
+import io.confluent.kafka.serializers.KafkaAvroDeserializer;
+import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.example.nabat.events.vote.VoteChanged;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,10 +23,9 @@ import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
 import org.springframework.util.backoff.FixedBackOff;
-import tools.jackson.databind.json.JsonMapper;
 
+import java.util.HashMap;
 import java.util.Map;
 
 import static com.example.nabatvoting.infrastructure.kafka.KafkaTopics.VOTE_CHANGED;
@@ -30,14 +33,10 @@ import static com.example.nabatvoting.infrastructure.kafka.KafkaTopics.VOTE_CHAN
 /**
  * Kafka infrastructure for the voting module.
  *
- * <p>Consumer and listener-container beans for the two event types are built by shared
- * generic helpers. Each type previously had its own hand-written copy of all three — six
- * near-identical beans differing only in a type parameter.
- *
- * <p>The {@link JsonMapper} is Jackson 3 ({@code tools.jackson}), which auto-registers
- * java.time support via the service loader, so {@link java.time.Instant} fields on the
- * events round-trip correctly. (The previous javadoc here claimed a module was being
- * registered explicitly; nothing was, and nothing needs to be.)
+ * <p>Values on the wire are Avro with a schema id in front of them, so the producer here
+ * sends plain bytes — the record was already serialised when the outbox row was written — and
+ * the consumer resolves the id through the registry into the generated {@link VoteChanged}.
+ * Neither side carries a copy of the schema: that is what the registry is for.
  */
 @Configuration
 @EnableKafka
@@ -47,12 +46,14 @@ public class KafkaConfig {
 
     private final String bootstrapServers;
     private final String groupId;
+    private final String schemaRegistryUrl;
     private final short topicReplicas;
     private final int topicPartitions;
 
     public KafkaConfig(
             @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
             @Value("${spring.kafka.consumer.group-id}") String groupId,
+            @Value("${nabat.schema-registry.url}") String schemaRegistryUrl,
             /*
              * Configurable, and defaulting to 1.
              *
@@ -67,11 +68,12 @@ public class KafkaConfig {
     ) {
         this.bootstrapServers = bootstrapServers;
         this.groupId = groupId;
+        this.schemaRegistryUrl = schemaRegistryUrl;
         this.topicReplicas = topicReplicas;
         this.topicPartitions = topicPartitions;
     }
 
-    // ------------------------------------------------------------------ topics
+    // ------------------------------------------------------------------- topic
 
     @Bean
     public NewTopic voteChangedTopic() {
@@ -81,28 +83,19 @@ public class KafkaConfig {
                 .build();
     }
 
-    // --------------------------------------------------------- shared mapper
-
-    @Bean
-    public JsonMapper kafkaObjectMapper() {
-        return JsonMapper.builder().build();
-    }
-
     // ---------------------------------------------------------------- producer
 
     /**
-     * The one producer, used by the outbox relay.
+     * The only producer, used by the outbox relay.
      *
-     * <p>Its values are strings because the relay sends the JSON already stored in the
-     * outbox row. There used to be a template per event type, each with a Jackson
-     * serializer; serialising at send time is precisely what the outbox moved to commit
-     * time, and the bytes are the same either way because the same {@link JsonMapper}
-     * writes them.
+     * <p>Its values are bytes because the relay ships what the outbox row holds. Serialising
+     * at send time is precisely what the outbox moved to commit time, and with a registry
+     * involved it would also put an HTTP call on the sending path.
      */
     @Bean
-    public KafkaTemplate<String, String> outboxKafkaTemplate() {
+    public KafkaTemplate<String, byte[]> outboxKafkaTemplate() {
         return new KafkaTemplate<>(new DefaultKafkaProducerFactory<>(
-                producerProperties(), new StringSerializer(), new StringSerializer()));
+                producerProperties(), new StringSerializer(), new ByteArraySerializer()));
     }
 
     private Map<String, Object> producerProperties() {
@@ -119,39 +112,30 @@ public class KafkaConfig {
         );
     }
 
-    // --------------------------------------------------------------- consumers
+    // ---------------------------------------------------------------- consumer
 
-    /**
-     * One factory, because there is one topic.
-     *
-     * <p>There were two of each — topic, factory, consumer factory, listener — for a cast and
-     * a retraction. They are still two things in the domain; they are one message on one
-     * keyed topic here, which is what makes everything said about an alert arrive in order.
-     */
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, VoteChangedMessage>
-            kafkaListenerContainerFactory(JsonMapper mapper) {
-
-        ConcurrentKafkaListenerContainerFactory<String, VoteChangedMessage> factory =
+    public ConcurrentKafkaListenerContainerFactory<String, VoteChanged> kafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, VoteChanged> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
-        factory.setConsumerFactory(consumerFactory(VoteChangedMessage.class, mapper));
+        factory.setConsumerFactory(consumerFactory());
         factory.setCommonErrorHandler(errorHandler());
         return factory;
     }
 
-    private <T> ConsumerFactory<String, T> consumerFactory(Class<T> eventType, JsonMapper mapper) {
-        JacksonJsonDeserializer<T> deserializer = new JacksonJsonDeserializer<>(eventType, mapper);
-        deserializer.addTrustedPackages("com.example.nabatvoting.*");
+    private ConsumerFactory<String, VoteChanged> consumerFactory() {
+        Map<String, Object> properties = new HashMap<>();
+        properties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        properties.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+        properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        properties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        properties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, KafkaAvroDeserializer.class);
+        properties.put(AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG, schemaRegistryUrl);
+        // Without this the deserialiser hands back a GenericRecord and every field access is
+        // a string lookup that the compiler cannot check.
+        properties.put(KafkaAvroDeserializerConfig.SPECIFIC_AVRO_READER_CONFIG, true);
 
-        return new DefaultKafkaConsumerFactory<>(
-                Map.of(
-                        ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
-                        ConsumerConfig.GROUP_ID_CONFIG, groupId,
-                        ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
-                ),
-                new StringDeserializer(),
-                deserializer
-        );
+        return new DefaultKafkaConsumerFactory<>(properties);
     }
 
     /**

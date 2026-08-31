@@ -52,6 +52,35 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       CLUSTER_ID: DWKW8vl4RI6tPZGCbhhHVg
 
+  # Holds the Avro schema for vote.changed and refuses a version that would break the
+  # consumers already reading it. Without it this service cannot serialise a vote event, so
+  # it is not optional the way a metrics stack is.
+  schema-registry:
+    image: confluentinc/cp-schema-registry:8.0.0
+    container_name: nabat-voting-schema-registry
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8085/subjects || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    ports:
+      - "8085:8085"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8085
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+      # The registry keeps its schemas in a Kafka topic, which on a one-broker cluster has
+      # to be single-replica like the rest.
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: "1"
+      # BACKWARD: a new schema must be able to read data written with the old one. That is
+      # the direction this system needs, because consumers replay the topic from the start
+      # to rebuild their projections and therefore meet old messages by design.
+      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: backward
+
   nabat-voting-app:
     build:
       context: .
@@ -62,11 +91,14 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      schema-registry:
+        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/nabat_voting_db
       SPRING_DATASOURCE_USERNAME: nabat_voting_user
       SPRING_DATASOURCE_PASSWORD: nabat_voting_password
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      NABAT_SCHEMA_REGISTRY_URL: http://schema-registry:8085
       SERVER_PORT: 8081
       # Must match nabat-app's JWT_SECRET — see .env.example.
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required and must match nabat-app. Generate with `openssl rand -base64 48` and set it in .env}

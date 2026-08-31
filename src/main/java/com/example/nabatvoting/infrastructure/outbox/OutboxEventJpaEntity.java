@@ -41,8 +41,8 @@ public class OutboxEventJpaEntity {
     @Column(name = "partition_key", nullable = false)
     private String partitionKey;
 
-    @Column(name = "payload", nullable = false, length = 8192)
-    private String payload;
+    @Column(name = "payload", nullable = false)
+    private byte[] payload;
 
     @Column(name = "occurred_at", nullable = false)
     private Instant occurredAt;
@@ -57,7 +57,7 @@ public class OutboxEventJpaEntity {
     private String lastError;
 
     private OutboxEventJpaEntity(UUID id, String topic, String eventType, String partitionKey,
-                                 String payload, Instant occurredAt) {
+                                 byte[] payload, Instant occurredAt) {
         this.id = id;
         this.topic = topic;
         this.eventType = eventType;
@@ -67,7 +67,7 @@ public class OutboxEventJpaEntity {
     }
 
     static OutboxEventJpaEntity pending(String topic, String eventType, String partitionKey,
-                                        String payload, Instant occurredAt) {
+                                        byte[] payload, Instant occurredAt) {
         return new OutboxEventJpaEntity(UUID.randomUUID(), topic, eventType, partitionKey,
                 payload, occurredAt);
     }

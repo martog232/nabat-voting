@@ -4,9 +4,17 @@
 
 | Topic | Key | Value type | Partitions | Description |
 |-------|-----|------------|------------|-------------|
-| `vote.changed` | `alertId` | `VoteChangedMessage` (JSON) | 1 | Every change to an alert's votes: cast, change of mind, retraction |
+| `vote.changed` | `alertId` | `VoteChanged` (Avro) | 1 | Every change to an alert's votes: cast, change of mind, retraction |
 
-## VoteChangedMessage Schema
+## VoteChanged Schema
+
+The schema is [`src/main/avro/VoteChanged.avsc`](../src/main/avro/VoteChanged.avsc) and it is
+the contract, not a description of one: `avro-maven-plugin` generates the Java class from it,
+so the code cannot drift from the schema. nabat-app holds a verbatim copy of the same file and
+generates its own class from it; the registry is what makes a divergence between the two
+copies fail instead of drift.
+
+Written as JSON, a message looks like this — but it does not travel as JSON:
 
 ```json
 {
@@ -15,7 +23,7 @@
   "alertId":    "alert-123",
   "voterId":    "user-456",
   "voteType":   "CONFIRM",
-  "occurredAt": "2024-11-15T10:30:00Z",
+  "occurredAt": 1731666600000,
   "tallies":  {
     "upvotes":         3,
     "downvotes":       1,
@@ -27,13 +35,18 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `changeType` | `CAST` \| `REMOVED` | What happened |
-| `voteId` | UUID (string) or null | The vote; null on a retraction |
+| `changeType` | enum `CAST` \| `REMOVED` \| `UNKNOWN` | What happened |
+| `voteId` | nullable string | The vote; null on a retraction |
 | `alertId` | string | Identifier of the alert being voted on |
 | `voterId` | string | Identifier of the voter |
-| `voteType` | `UPVOTE` \| `DOWNVOTE` \| `CONFIRM`, or null | What was cast; null on a retraction |
-| `occurredAt` | ISO-8601 timestamp | UTC time of the change |
-| `tallies` | object | The alert's counts **as of this change**, read from the write model in the same transaction |
+| `voteType` | nullable enum `UPVOTE` \| `DOWNVOTE` \| `CONFIRM` \| `UNKNOWN` | What was cast; null on a retraction |
+| `occurredAt` | long, `timestamp-millis` | UTC time of the change; a `java.time.Instant` in the generated class |
+| `tallies` | record | The alert's counts **as of this change**, read from the write model in the same transaction |
+
+Both enums carry `"default": "UNKNOWN"`. Avro enums are closed: without a default, adding a
+vote type would make every reader built before it fail on the first message carrying the new
+symbol. With one, old readers see `UNKNOWN` and keep going — which for a consumer that only
+maintains counts is exactly right, since the tallies are already computed.
 
 ## Why one topic and not two
 
@@ -68,15 +81,34 @@ the event idempotent: writing them twice is the same write.
 anyway, because `VoteCounts` is the single definition of that formula and a consumer
 recomputing it would be a copy free to drift.
 
-## Serialisation
+## Serialisation and the schema registry
 
-Messages are serialised to JSON with Jackson at the moment the outbox row is written, and the
-relay ships those bytes unchanged, so the wire format is fixed at commit time rather than at
-send time.  `VoteChangedMessage` is a record, so Jackson uses its canonical constructor to
-read it back.
+A message is a magic byte, the four-byte id of the schema it was written with, then the Avro
+body. The id is what a consumer resolves against the registry to know how to read the bytes;
+neither side ships a copy of the schema, and nothing in the message names a field.
 
-The consumer factory is configured to trust the package `com.example.nabatvoting.*` via
-`JacksonJsonDeserializer#addTrustedPackages`.
+Serialisation happens when the outbox row is written, inside the transaction that writes the
+vote, and the relay ships those bytes unchanged — so the wire format is fixed at commit time
+rather than at send time. That means resolving the schema id would be an HTTP call inside a
+database transaction, so `VoteEventAvroSerializer` registers the schema at startup through the
+same client the serialiser uses; by the time a vote arrives, the id is cached.
+
+Registering at startup also makes an incompatible change fail this service at boot rather than
+at the first vote: the registry rejects the schema, and the application does not start.
+
+| Setting | Value | Why |
+|---|---|---|
+| Subject | `vote.changed-value` | `TopicNameStrategy`, the default: one schema per topic |
+| Compatibility | `BACKWARD` | A new schema must read old data — consumers replay this topic from the start to rebuild projections, so they meet old messages by design |
+| `specific.avro.reader` | `true` | Deserialise into the generated class; without it every field access is an unchecked string lookup on a `GenericRecord` |
+
+What `BACKWARD` allows: deleting a field, and adding one **with a default**. What it refuses:
+adding a required field, or narrowing a type. A rename is deletion plus addition, which passes
+the check and breaks the meaning — the registry enforces shape, never sense.
+
+Tests point `nabat.schema-registry.url` at `mock://`, which Confluent's serialisers understand
+as an in-memory registry shared per scope inside the JVM. That is why the suite needs no
+registry container.
 
 ## Consumer Group
 
