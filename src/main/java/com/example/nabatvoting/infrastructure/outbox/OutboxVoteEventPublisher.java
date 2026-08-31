@@ -4,12 +4,11 @@ import com.example.nabatvoting.domain.event.VoteCastEvent;
 import com.example.nabatvoting.domain.event.VoteRemovedEvent;
 import com.example.nabatvoting.domain.port.out.VoteEventPublisher;
 import com.example.nabatvoting.infrastructure.kafka.KafkaTopics;
+import com.example.nabatvoting.infrastructure.kafka.VoteChangedMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
-
-import java.time.Instant;
 
 /**
  * Writes vote events to the outbox table instead of sending them to Kafka.
@@ -22,6 +21,11 @@ import java.time.Instant;
  * the consumer deserialises with, so the bytes stored are the bytes sent. That also means a
  * failure to serialise fails the vote — loudly, at the point of the mistake — instead of
  * being discovered later by a relay that cannot drain its backlog.
+ *
+ * <p>Both domain events become one {@link VoteChangedMessage} on one topic. The translation
+ * belongs here: this is the boundary where a domain fact turns into somebody else's input,
+ * and the reason for a single topic — order per alert — is a transport concern that the
+ * domain should not have to know about.
  */
 @Component
 public class OutboxVoteEventPublisher implements VoteEventPublisher {
@@ -38,20 +42,24 @@ public class OutboxVoteEventPublisher implements VoteEventPublisher {
 
     @Override
     public void publish(VoteCastEvent event) {
-        append(KafkaTopics.VOTE_CAST, VoteCastEvent.class.getSimpleName(),
-                event.alertId(), event, event.castAt());
+        append(VoteChangedMessage.of(event));
     }
 
     @Override
     public void publishRemoved(VoteRemovedEvent event) {
-        append(KafkaTopics.VOTE_REMOVED, VoteRemovedEvent.class.getSimpleName(),
-                event.alertId(), event, event.removedAt());
+        append(VoteChangedMessage.of(event));
     }
 
-    private void append(String topic, String eventType, String alertId, Object event, Instant occurredAt) {
+    private void append(VoteChangedMessage message) {
         outbox.save(OutboxEventJpaEntity.pending(
-                topic, eventType, alertId, mapper.writeValueAsString(event), occurredAt));
+                KafkaTopics.VOTE_CHANGED,
+                message.changeType().name(),
+                // The key, and so the partition: everything about one alert stays in order.
+                message.alertId(),
+                mapper.writeValueAsString(message),
+                message.occurredAt()));
 
-        log.debug("Queued {} for alert '{}' to topic '{}'", eventType, alertId, topic);
+        log.debug("Queued {} for alert '{}' to topic '{}'",
+                message.changeType(), message.alertId(), KafkaTopics.VOTE_CHANGED);
     }
 }

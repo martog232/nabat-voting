@@ -12,7 +12,7 @@ The service follows a **hexagonal (ports-and-adapters)** architecture:
 src/main/java/com/example/nabatvoting/
 ├── domain/
 │   ├── model/          # Vote, VoteId, AlertId, VoterId
-│   ├── event/          # VoteCastEvent
+│   ├── event/          # VoteCastEvent, VoteRemovedEvent, VoteTallies
 │   └── port/
 │       ├── in/         # CastVoteUseCase, CastVoteCommand  (inbound ports)
 │       └── out/        # VoteRepository, VoteEventPublisher (outbound ports)
@@ -20,7 +20,7 @@ src/main/java/com/example/nabatvoting/
 │   ├── service/        # CastVoteService (use-case implementation)
 │   └── projection/     # CredibilityProjection (read model)
 └── infrastructure/
-    ├── kafka/          # KafkaVoteEventConsumer, KafkaTopics
+    ├── kafka/          # KafkaVoteEventConsumer, KafkaTopics, VoteChangedMessage (the wire shape)
     ├── outbox/         # OutboxVoteEventPublisher, OutboxRelay (events leave via a table)
     ├── persistence/    # PostgresVoteRepositoryAdapter, VoteJpaEntity, VoteJpaRepository
     └── config/         # KafkaConfig, SchedulingConfig
