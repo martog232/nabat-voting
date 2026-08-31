@@ -1,7 +1,6 @@
 package com.example.nabatvoting.infrastructure.config;
 
-import com.example.nabatvoting.domain.event.VoteCastEvent;
-import com.example.nabatvoting.domain.event.VoteRemovedEvent;
+import com.example.nabatvoting.infrastructure.kafka.VoteChangedMessage;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -26,8 +25,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Map;
 
-import static com.example.nabatvoting.infrastructure.kafka.KafkaTopics.VOTE_CAST;
-import static com.example.nabatvoting.infrastructure.kafka.KafkaTopics.VOTE_REMOVED;
+import static com.example.nabatvoting.infrastructure.kafka.KafkaTopics.VOTE_CHANGED;
 
 /**
  * Kafka infrastructure for the voting module.
@@ -76,17 +74,8 @@ public class KafkaConfig {
     // ------------------------------------------------------------------ topics
 
     @Bean
-    public NewTopic voteCastTopic() {
-        return topic(VOTE_CAST);
-    }
-
-    @Bean
-    public NewTopic voteRemovedTopic() {
-        return topic(VOTE_REMOVED);
-    }
-
-    private NewTopic topic(String name) {
-        return TopicBuilder.name(name)
+    public NewTopic voteChangedTopic() {
+        return TopicBuilder.name(VOTE_CHANGED)
                 .partitions(topicPartitions)
                 .replicas(topicReplicas)
                 .build();
@@ -132,24 +121,20 @@ public class KafkaConfig {
 
     // --------------------------------------------------------------- consumers
 
+    /**
+     * One factory, because there is one topic.
+     *
+     * <p>There were two of each — topic, factory, consumer factory, listener — for a cast and
+     * a retraction. They are still two things in the domain; they are one message on one
+     * keyed topic here, which is what makes everything said about an alert arrive in order.
+     */
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, VoteCastEvent> kafkaListenerContainerFactory(
-            JsonMapper mapper) {
-        return listenerContainerFactory(VoteCastEvent.class, mapper);
-    }
+    public ConcurrentKafkaListenerContainerFactory<String, VoteChangedMessage>
+            kafkaListenerContainerFactory(JsonMapper mapper) {
 
-    @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, VoteRemovedEvent>
-            voteRemovedKafkaListenerContainerFactory(JsonMapper mapper) {
-        return listenerContainerFactory(VoteRemovedEvent.class, mapper);
-    }
-
-    private <T> ConcurrentKafkaListenerContainerFactory<String, T> listenerContainerFactory(
-            Class<T> eventType, JsonMapper mapper) {
-
-        ConcurrentKafkaListenerContainerFactory<String, T> factory =
+        ConcurrentKafkaListenerContainerFactory<String, VoteChangedMessage> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
-        factory.setConsumerFactory(consumerFactory(eventType, mapper));
+        factory.setConsumerFactory(consumerFactory(VoteChangedMessage.class, mapper));
         factory.setCommonErrorHandler(errorHandler());
         return factory;
     }

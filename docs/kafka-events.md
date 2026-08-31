@@ -4,18 +4,18 @@
 
 | Topic | Key | Value type | Partitions | Description |
 |-------|-----|------------|------------|-------------|
-| `vote.cast` | `alertId` | `VoteCastEvent` (JSON) | 1 | Published whenever a vote is cast or changed |
-| `vote.removed` | `alertId` | `VoteRemovedEvent` (JSON) | 1 | Published when a voter retracts their vote |
+| `vote.changed` | `alertId` | `VoteChangedMessage` (JSON) | 1 | Every change to an alert's votes: cast, change of mind, retraction |
 
-## VoteCastEvent Schema
+## VoteChangedMessage Schema
 
 ```json
 {
-  "voteId":   "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "alertId":  "alert-123",
-  "voterId":  "user-456",
-  "voteType": "CONFIRM",
-  "castAt":   "2024-11-15T10:30:00Z",
+  "changeType": "CAST",
+  "voteId":     "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "alertId":    "alert-123",
+  "voterId":    "user-456",
+  "voteType":   "CONFIRM",
+  "occurredAt": "2024-11-15T10:30:00Z",
   "tallies":  {
     "upvotes":         3,
     "downvotes":       1,
@@ -27,17 +27,35 @@
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `voteId` | UUID (string) | Unique identifier of the vote |
+| `changeType` | `CAST` \| `REMOVED` | What happened |
+| `voteId` | UUID (string) or null | The vote; null on a retraction |
 | `alertId` | string | Identifier of the alert being voted on |
 | `voterId` | string | Identifier of the voter |
-| `voteType` | `UPVOTE` \| `DOWNVOTE` \| `CONFIRM` | What was cast |
-| `castAt` | ISO-8601 timestamp | UTC time at which the vote was cast |
-| `tallies` | object | The alert's counts **as of this vote**, read from the write model in the same transaction |
+| `voteType` | `UPVOTE` \| `DOWNVOTE` \| `CONFIRM`, or null | What was cast; null on a retraction |
+| `occurredAt` | ISO-8601 timestamp | UTC time of the change |
+| `tallies` | object | The alert's counts **as of this change**, read from the write model in the same transaction |
 
-## VoteRemovedEvent Schema
+## Why one topic and not two
 
-Same `tallies`, with `removedAt` in place of `castAt` and no `voteId` or `voteType` — the
-projection only needs to know which alert changed and to what.
+There were two, `vote.cast` and `vote.removed`. Kafka orders messages within a partition and
+the key selects the partition, so one topic keyed by alert means everything said about an
+alert arrives in the order it happened. Two topics have two sets of partitions and two
+consumer containers polling them independently: a vote and an immediate retraction could be
+applied in either order, and a consumer that writes the counts it is told would then hold
+numbers that are wrong until the next vote on that alert.
+
+This service's own consumer never had that problem, because it recomputes from the write
+model rather than believing the message. nabat-app cannot — it does not own the votes.
+
+The alternative was a watermark on each consumer: carry the event time, keep the last applied
+one, ignore anything older. It compensates for disorder instead of preventing it, every
+consumer has to implement it, and it is only as good as the producer's clock. One keyed topic
+gives the same guarantee structurally.
+
+The domain still has two events. `VoteCastEvent` and `VoteRemovedEvent` are different things
+to say, and they stay different; `VoteChangedMessage` is the transport's shape, built at the
+outbox boundary. `changeType` is there for consumers that care which happened — the
+projection does not.
 
 ## Why the tallies are on the event
 
@@ -50,31 +68,31 @@ the event idempotent: writing them twice is the same write.
 anyway, because `VoteCounts` is the single definition of that formula and a consumer
 recomputing it would be a copy free to drift.
 
-Ordering is per alert, since that is the message key. Two events for one alert arrive in the
-order they were written; nothing depends on ordering *between* alerts.
-
 ## Serialisation
 
-Events are serialised to JSON using Jackson (`JsonSerializer` / `JsonDeserializer` from
-`spring-kafka`).  The `VoteCastEvent` Java type is a record, so Jackson uses its compact
-canonical constructor for deserialisation.
+Messages are serialised to JSON with Jackson at the moment the outbox row is written, and the
+relay ships those bytes unchanged, so the wire format is fixed at commit time rather than at
+send time.  `VoteChangedMessage` is a record, so Jackson uses its canonical constructor to
+read it back.
 
 The consumer factory is configured to trust the package `com.example.nabatvoting.*` via
-`JsonDeserializer#addTrustedPackages`.
+`JacksonJsonDeserializer#addTrustedPackages`.
 
 ## Consumer Group
 
-The voting service subscribes to `vote.cast` with the consumer group
+The voting service subscribes to `vote.changed` with the consumer group
 `nabat-voting-group` (configurable via `spring.kafka.consumer.group-id`).
 
-If additional microservices need to react to vote events (e.g. a notification service), they
-should use their own consumer group so that each service receives all messages independently.
+If additional microservices need to react to vote events (nabat-app already does, and a
+notification service will), they use their own consumer group so that each service receives
+every message independently.
 
 ## Partitioning
 
-All events for a given alert are published with `alertId` as the Kafka message key.  This ensures
-that votes for the same alert are always delivered in order to the same partition / consumer
-instance.
+All messages for a given alert are published with `alertId` as the Kafka message key, so they
+land in one partition and are delivered in the order they were written.  Nothing depends on
+ordering *between* alerts.  This is the guarantee that made one topic worth more than two —
+see above.
 
 ## Delivery guarantees
 

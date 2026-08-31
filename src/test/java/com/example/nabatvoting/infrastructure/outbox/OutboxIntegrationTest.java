@@ -1,12 +1,12 @@
 package com.example.nabatvoting.infrastructure.outbox;
 
-import com.example.nabatvoting.domain.event.VoteCastEvent;
 import com.example.nabatvoting.domain.model.AlertId;
 import com.example.nabatvoting.domain.model.VoteType;
 import com.example.nabatvoting.domain.model.VoterId;
 import com.example.nabatvoting.domain.port.in.CastVoteCommand;
 import com.example.nabatvoting.domain.port.in.CastVoteUseCase;
 import com.example.nabatvoting.infrastructure.kafka.KafkaTopics;
+import com.example.nabatvoting.infrastructure.kafka.VoteChangedMessage;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -35,7 +35,7 @@ import static org.awaitility.Awaitility.await;
 @SpringBootTest
 @EmbeddedKafka(
         partitions = 1,
-        topics = {KafkaTopics.VOTE_CAST, KafkaTopics.VOTE_REMOVED},
+        topics = {KafkaTopics.VOTE_CHANGED},
         bootstrapServersProperty = "spring.kafka.bootstrap-servers"
 )
 @DirtiesContext
@@ -79,20 +79,24 @@ class OutboxIntegrationTest {
 
         assertThat(pendingBeforeRollback).hasSize(1);
         OutboxEventJpaEntity row = pendingBeforeRollback.getFirst();
-        assertThat(row.getTopic()).isEqualTo(KafkaTopics.VOTE_CAST);
+        assertThat(row.getTopic()).isEqualTo(KafkaTopics.VOTE_CHANGED);
+        assertThat(row.getPartitionKey())
+            .as("the key is the alert, which is what keeps its changes in one partition")
+            .isEqualTo(alertId);
         assertThat(row.getPublishedAt()).isNull();
 
         // The stored bytes are the bytes that go on the wire, so a payload that cannot be
         // read back is a permanently undeliverable row. Reading it back is cheap insurance.
-        VoteCastEvent event = mapper.readValue(row.getPayload(), VoteCastEvent.class);
-        assertThat(event.alertId()).isEqualTo(alertId);
-        assertThat(event.voterId()).isEqualTo(voter.value());
-        assertThat(event.voteType()).isEqualTo(VoteType.UPVOTE);
-        assertThat(event.castAt()).isNotNull();
+        VoteChangedMessage message = mapper.readValue(row.getPayload(), VoteChangedMessage.class);
+        assertThat(message.changeType()).isEqualTo(VoteChangedMessage.ChangeType.CAST);
+        assertThat(message.alertId()).isEqualTo(alertId);
+        assertThat(message.voterId()).isEqualTo(voter.value());
+        assertThat(message.voteType()).isEqualTo(VoteType.UPVOTE);
+        assertThat(message.occurredAt()).isNotNull();
         // The nested tallies are the part a consumer elsewhere actually applies, so their
         // surviving the round trip is worth an assertion rather than an assumption.
-        assertThat(event.tallies().upvotes()).isEqualTo(1);
-        assertThat(event.tallies().credibilityScore()).isEqualTo(1);
+        assertThat(message.tallies().upvotes()).isEqualTo(1);
+        assertThat(message.tallies().credibilityScore()).isEqualTo(1);
 
         assertThat(rowsFor(alertId)).isEmpty();
         assertThat(castVoteUseCase.getUserVote(new AlertId(alertId), voter)).isEmpty();
@@ -149,8 +153,13 @@ class OutboxIntegrationTest {
                 assertThat(castVoteUseCase.getVoteStats(new AlertId(alertId)).credibilityScore())
                         .isZero());
 
+        // Both changes on one topic, told apart by type rather than by which topic they
+        // arrived on — which is what puts them in one partition and so in order.
         assertThat(rowsFor(alertId))
-                .extracting(OutboxEventJpaEntity::getTopic)
-                .containsExactlyInAnyOrder(KafkaTopics.VOTE_CAST, KafkaTopics.VOTE_REMOVED);
+                .allSatisfy(row -> assertThat(row.getTopic()).isEqualTo(KafkaTopics.VOTE_CHANGED))
+                .extracting(OutboxEventJpaEntity::getEventType)
+                .containsExactlyInAnyOrder(
+                    VoteChangedMessage.ChangeType.CAST.name(),
+                    VoteChangedMessage.ChangeType.REMOVED.name());
     }
 }

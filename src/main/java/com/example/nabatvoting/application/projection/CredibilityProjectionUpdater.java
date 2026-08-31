@@ -1,7 +1,5 @@
 package com.example.nabatvoting.application.projection;
 
-import com.example.nabatvoting.domain.event.VoteCastEvent;
-import com.example.nabatvoting.domain.event.VoteRemovedEvent;
 import com.example.nabatvoting.domain.model.AlertCredibility;
 import com.example.nabatvoting.domain.model.AlertId;
 import com.example.nabatvoting.domain.model.VoteCounts;
@@ -53,14 +51,8 @@ public class CredibilityProjectionUpdater
 
     @Override
     @Transactional
-    public void onVoteCast(VoteCastEvent event) {
-        recompute(new AlertId(event.alertId()));
-    }
-
-    @Override
-    @Transactional
-    public void onVoteRemoved(VoteRemovedEvent event) {
-        recompute(new AlertId(event.alertId()));
+    public void onVotesChanged(AlertId alertId) {
+        recompute(alertId);
     }
 
     /**

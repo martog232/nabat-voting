@@ -28,7 +28,7 @@ logic free of framework and infrastructure concerns.  All communication with ext
 │  └─────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
            │                                    ▲
-           │ append to outbox                   │ consume VoteCastEvent
+           │ append to outbox                   │ consume VoteChangedMessage
            │ (the vote's own transaction)       │
            ▼                                    │
 ┌────────────────────────┐           ┌──────────────────────────┐
@@ -41,7 +41,7 @@ logic free of framework and infrastructure concerns.  All communication with ext
 │      OutboxRelay       │                        │
 │  (committed rows only) │                        │
 └──────────┬─────────────┘                        │
-           │           vote.cast topic            │
+           │         vote.changed topic            │
            └──────────────────────────────────────┘
                         Apache Kafka
 ```
@@ -54,7 +54,7 @@ logic free of framework and infrastructure concerns.  All communication with ext
 | `VoteId` | UUID-based identifier for a vote |
 | `AlertId` | String-based identifier of the alert being voted on |
 | `VoterId` | String-based identifier of the voter |
-| `VoteCastEvent` | Domain event emitted when a vote is successfully persisted |
+| `VoteCastEvent`, `VoteRemovedEvent` | Domain events. Both become one `VoteChangedMessage` on the wire — see docs/kafka-events.md for why the transport has one shape where the domain has two |
 
 ## Event Flow
 
@@ -63,7 +63,7 @@ logic free of framework and infrastructure concerns.  All communication with ext
    `VoteEventPublisher#publish(VoteCastEvent)`.
 3. `OutboxVoteEventPublisher` serialises the event and writes it to `outbox_event` — in the
    transaction that is writing the vote, so the two commit together or not at all.
-4. `OutboxRelay` polls for committed rows, sends them to the `vote.cast` topic, and marks them
+4. `OutboxRelay` polls for committed rows, sends them to the `vote.changed` topic, and marks them
    published.
 5. `KafkaVoteEventConsumer` receives the message and drives `CredibilityProjectionUpdater`, which
    recomputes the affected alert's counts from the `votes` write model.
@@ -103,10 +103,11 @@ schedule drops rows published longer ago than `nabat.outbox.retention`.
 
 ### KafkaVoteEventConsumer
 
-Spring `@KafkaListener` that subscribes to the `vote.cast` and `vote.removed` topics.
-Deserialises the JSON payload with `JacksonJsonDeserializer` and delegates to
-`CredibilityProjectionUpdater`, which recomputes rather than applying deltas — so a redelivered
-event produces the same row.
+One Spring `@KafkaListener` on `vote.changed`.  Deserialises the JSON payload with
+`JacksonJsonDeserializer` and hands the alert id to `CredibilityProjectionUpdater`, which
+recomputes from the write model rather than applying what the message carries — so a
+redelivered message produces the same row, and a cast and a retraction need no separate
+handling.
 
 ### PostgresVoteRepositoryAdapter
 

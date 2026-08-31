@@ -17,8 +17,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * End-to-end check of the CQRS read path: casting a vote publishes a
- * {@code VoteCastEvent} to Kafka, the consumer recomputes the durable
+ * End-to-end check of the CQRS read path: casting a vote publishes a message to the one
+ * vote topic, the consumer recomputes the durable
  * {@code alert_credibility} projection, and {@link CastVoteUseCase#getVoteStats}
  * reads the resulting score back. The {@code await} blocks model the eventual
  * consistency between the write-model commit and the projection catching up.
@@ -26,7 +26,7 @@ import static org.awaitility.Awaitility.await;
 @SpringBootTest
 @EmbeddedKafka(
         partitions = 1,
-        topics = {KafkaTopics.VOTE_CAST, KafkaTopics.VOTE_REMOVED},
+        topics = {KafkaTopics.VOTE_CHANGED},
         bootstrapServersProperty = "spring.kafka.bootstrap-servers"
 )
 @DirtiesContext
