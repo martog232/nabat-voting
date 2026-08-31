@@ -76,10 +76,10 @@ services:
       # The registry keeps its schemas in a Kafka topic, which on a one-broker cluster has
       # to be single-replica like the rest.
       SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: "1"
-      # BACKWARD: a new schema must be able to read data written with the old one. That is
-      # the direction this system needs, because consumers replay the topic from the start
-      # to rebuild their projections and therefore meet old messages by design.
-      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: backward
+      # BACKWARD_TRANSITIVE: a new schema must read data written by *every* published version,
+      # not just the previous one. Consumers replay this topic from the beginning to rebuild
+      # their projections, so the oldest message on it is still a message they will read.
+      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: backward_transitive
 
   nabat-voting-app:
     build:
