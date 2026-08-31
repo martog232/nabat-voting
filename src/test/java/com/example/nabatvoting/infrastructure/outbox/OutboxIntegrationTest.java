@@ -89,6 +89,10 @@ class OutboxIntegrationTest {
         assertThat(event.voterId()).isEqualTo(voter.value());
         assertThat(event.voteType()).isEqualTo(VoteType.UPVOTE);
         assertThat(event.castAt()).isNotNull();
+        // The nested tallies are the part a consumer elsewhere actually applies, so their
+        // surviving the round trip is worth an assertion rather than an assumption.
+        assertThat(event.tallies().upvotes()).isEqualTo(1);
+        assertThat(event.tallies().credibilityScore()).isEqualTo(1);
 
         assertThat(rowsFor(alertId)).isEmpty();
         assertThat(castVoteUseCase.getUserVote(new AlertId(alertId), voter)).isEmpty();

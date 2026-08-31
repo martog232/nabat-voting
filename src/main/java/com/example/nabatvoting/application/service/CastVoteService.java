@@ -2,6 +2,7 @@ package com.example.nabatvoting.application.service;
 
 import com.example.nabatvoting.domain.event.VoteCastEvent;
 import com.example.nabatvoting.domain.event.VoteRemovedEvent;
+import com.example.nabatvoting.domain.event.VoteTallies;
 import com.example.nabatvoting.domain.exception.DuplicateVoteException;
 import com.example.nabatvoting.domain.model.AlertId;
 import com.example.nabatvoting.domain.model.Vote;
@@ -55,7 +56,6 @@ public class CastVoteService implements CastVoteUseCase {
             Vote changed = new Vote(current.getId(), command.alertId(), command.voterId(),
                     command.voteType(), now);
             voteRepository.save(changed);
-            publishCast(changed, now);
             voteId = current.getId();
             created = false;
         } else {
@@ -64,23 +64,38 @@ public class CastVoteService implements CastVoteUseCase {
             // A concurrent first vote by the same voter loses the race on the
             // (alert_id, voter_id) unique constraint; that surfaces as a 409 too.
             voteRepository.save(vote);
-            publishCast(vote, now);
             created = true;
         }
 
-        return new CastVoteResult(voteId, created, now, currentStats(command.alertId()));
+        // Read once, after the write, and used twice: the caller's response and the event
+        // both need the tallies as of this vote, and they must not be two different reads.
+        VoteCounts counts = countsFromWriteModel(command.alertId());
+
+        voteEventPublisher.publish(VoteCastEvent.of(
+                voteId.value(),
+                command.alertId().value(),
+                command.voterId().value(),
+                command.voteType(),
+                now,
+                VoteTallies.from(counts)
+        ));
+
+        return new CastVoteResult(voteId, created, now, VoteStats.from(counts));
     }
 
     @Override
     @Transactional
     public VoteStats removeVote(AlertId alertId, VoterId voterId) {
         voteRepository.deleteByAlertIdAndVoterId(alertId, voterId);
-        // Emit a removal event so the read-model recomputes. Idempotent on the
-        // consumer side, so emitting even when nothing was deleted is harmless.
-        voteEventPublisher.publishRemoved(
-                VoteRemovedEvent.of(alertId.value(), voterId.value(), Instant.now()));
 
-        return currentStats(alertId);
+        VoteCounts counts = countsFromWriteModel(alertId);
+
+        // Emit a removal event so the read-models catch up. Idempotent on the consumer
+        // side, so emitting even when nothing was deleted is harmless.
+        voteEventPublisher.publishRemoved(VoteRemovedEvent.of(
+                alertId.value(), voterId.value(), Instant.now(), VoteTallies.from(counts)));
+
+        return VoteStats.from(counts);
     }
 
     @Override
@@ -105,18 +120,11 @@ public class CastVoteService implements CastVoteUseCase {
      * projection: that is updated asynchronously off the Kafka topic, so at this
      * point it still holds the pre-vote counts. Returning it here is what made a
      * caller's own vote appear not to register until somebody else voted.
+     *
+     * <p>The same value goes onto the event, which is what lets a consumer elsewhere hold a
+     * projection without ever reading this service's own.
      */
-    private VoteStats currentStats(AlertId alertId) {
-        return VoteStats.from(voteRepository.countsFor(alertId));
-    }
-
-    private void publishCast(Vote vote, Instant castAt) {
-        voteEventPublisher.publish(VoteCastEvent.of(
-                vote.getId().value(),
-                vote.getAlertId().value(),
-                vote.getVoterId().value(),
-                vote.getVoteType(),
-                castAt
-        ));
+    private VoteCounts countsFromWriteModel(AlertId alertId) {
+        return voteRepository.countsFor(alertId);
     }
 }
