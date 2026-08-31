@@ -20,7 +20,7 @@ src/main/java/com/example/nabatvoting/
 │   ├── service/        # CastVoteService (use-case implementation)
 │   └── projection/     # CredibilityProjection (read model)
 └── infrastructure/
-    ├── kafka/          # KafkaVoteEventConsumer, KafkaTopics, VoteChangedMessage (the wire shape)
+    ├── kafka/          # KafkaVoteEventConsumer, KafkaTopics, VoteChangedEvents, VoteEventAvroSerializer
     ├── outbox/         # OutboxVoteEventPublisher, OutboxRelay (events leave via a table)
     ├── persistence/    # PostgresVoteRepositoryAdapter, VoteJpaEntity, VoteJpaRepository
     └── config/         # KafkaConfig, SchedulingConfig
@@ -60,6 +60,7 @@ See [docs/architecture.md](docs/architecture.md) for a detailed description.
 |----------|---------|-------------|
 | `spring.kafka.bootstrap-servers` | `localhost:9092` | Kafka broker address |
 | `spring.kafka.consumer.group-id` | `nabat-voting-group` | Consumer group for projection updates |
+| `nabat.schema-registry.url` | `http://127.0.0.1:8085` | Where the Avro schema for `vote.changed` lives. Required: without it a vote cannot be serialised. Tests use `mock://` |
 | `nabat.outbox.poll-interval` | `PT1S` | How often the relay looks for events to send |
 | `nabat.outbox.batch-size` | `100` | Rows claimed per pass |
 | `nabat.outbox.send-timeout` | `PT10S` | A slower send counts as failed and is retried |

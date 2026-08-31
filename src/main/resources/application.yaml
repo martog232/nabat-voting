@@ -45,6 +45,14 @@ nabat:
     topic-replicas: ${NABAT_KAFKA_TOPIC_REPLICAS:1}
     topic-partitions: ${NABAT_KAFKA_TOPIC_PARTITIONS:1}
 
+  schema-registry:
+    # No default that quietly works: without a registry this service cannot serialise a vote
+    # event, and pretending otherwise would mean discovering it at the first vote.
+    url: ${NABAT_SCHEMA_REGISTRY_URL:http://127.0.0.1:8085}
+    # Schema ids are looked up once and kept. Two schemas exist for this topic; the size is
+    # only here so the number is a decision rather than a default nobody read.
+    cache-size: ${NABAT_SCHEMA_REGISTRY_CACHE_SIZE:100}
+
   outbox:
     # The delay a vote waits before its projection catches up, so short. Polling an idle
     # table costs one index lookup: the index is partial, over pending rows only.

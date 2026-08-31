@@ -27,3 +27,10 @@ spring:
     consumer:
       group-id: nabat-voting-test-group
       auto-offset-reset: earliest
+
+# An in-memory registry, addressed by scope rather than by host. Confluent's serialisers
+# recognise the mock:// scheme and share one registry per scope within the JVM, so the
+# producer and consumer sides of a test agree on schema ids without a fifth container.
+nabat:
+  schema-registry:
+    url: mock://nabat-voting-tests

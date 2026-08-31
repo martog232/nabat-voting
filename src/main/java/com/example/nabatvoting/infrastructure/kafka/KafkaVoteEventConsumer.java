@@ -2,6 +2,7 @@ package com.example.nabatvoting.infrastructure.kafka;
 
 import com.example.nabatvoting.domain.model.AlertId;
 import com.example.nabatvoting.domain.port.in.MaintainCredibilityProjection;
+import org.example.nabat.events.vote.VoteChanged;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -27,8 +28,8 @@ public class KafkaVoteEventConsumer {
     }
 
     @KafkaListener(topics = KafkaTopics.VOTE_CHANGED, groupId = "${spring.kafka.consumer.group-id}")
-    public void onVoteChanged(VoteChangedMessage message) {
-        log.debug("Received {} for alert '{}'", message.changeType(), message.alertId());
-        credibilityProjection.onVotesChanged(new AlertId(message.alertId()));
+    public void onVoteChanged(VoteChanged message) {
+        log.debug("Received {} for alert '{}'", message.getChangeType(), message.getAlertId());
+        credibilityProjection.onVotesChanged(new AlertId(message.getAlertId()));
     }
 }

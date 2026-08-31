@@ -1,0 +1,72 @@
+{
+  "type": "record",
+  "name": "VoteChanged",
+  "namespace": "org.example.nabat.events.vote",
+  "doc": "Every change to an alert's votes: cast, change of mind, retraction. Published to vote.changed, keyed by alertId. This file is the contract between nabat-voting and its consumers, and is duplicated verbatim in nabat-app; the registry is what makes a divergence fail rather than drift.",
+  "fields": [
+    {
+      "name": "changeType",
+      "doc": "What happened. Consumers that only maintain counts ignore it.",
+      "type": {
+        "type": "enum",
+        "name": "VoteChangeType",
+        "symbols": ["CAST", "REMOVED", "UNKNOWN"],
+        "default": "UNKNOWN"
+      }
+    },
+    {
+      "name": "voteId",
+      "doc": "The vote. Absent on a retraction, which is about the alert rather than any one vote.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "alertId",
+      "doc": "The alert whose votes changed. Also the message key.",
+      "type": "string"
+    },
+    {
+      "name": "voterId",
+      "type": "string"
+    },
+    {
+      "name": "voteType",
+      "doc": "What was cast. Absent on a retraction.",
+      "type": [
+        "null",
+        {
+          "type": "enum",
+          "name": "VoteKind",
+          "symbols": ["UPVOTE", "DOWNVOTE", "CONFIRM", "UNKNOWN"],
+          "default": "UNKNOWN"
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "tallies",
+      "doc": "The alert's counts as of this change, read from the write model in the same transaction. Absolute values, so applying them twice is the same write — which is what makes at-least-once delivery safe for a consumer holding its own projection.",
+      "type": {
+        "type": "record",
+        "name": "VoteTallies",
+        "fields": [
+          {"name": "upvotes", "type": "int"},
+          {"name": "downvotes", "type": "int"},
+          {"name": "confirmations", "type": "int"},
+          {
+            "name": "credibilityScore",
+            "doc": "upvotes - downvotes + 2 x confirmations. Carried rather than derived: the formula has one owner, and a consumer recomputing it would be a second copy free to drift.",
+            "type": "int"
+          }
+        ]
+      }
+    }
+  ]
+}
