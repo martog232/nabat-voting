@@ -3,6 +3,7 @@ package com.example.nabatvoting.infrastructure.kafka;
 import io.confluent.kafka.schemaregistry.avro.AvroSchema;
 import io.confluent.kafka.schemaregistry.avro.AvroSchemaProvider;
 import io.confluent.kafka.schemaregistry.client.SchemaRegistryClientFactory;
+import io.confluent.kafka.schemaregistry.client.rest.exceptions.RestClientException;
 import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient;
 import io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig;
 import io.confluent.kafka.serializers.KafkaAvroSerializer;
@@ -12,8 +13,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -36,6 +39,14 @@ import java.util.Map;
  * break existing consumers fails this service at boot, loudly, instead of at the first vote
  * or — worse — silently on the consumer's side. CI catches it earlier still; this is the
  * backstop for anything deployed past it.
+ *
+ * <h2>Refused and unreachable are not the same failure</h2>
+ * Only the first is fatal. A registry that answers "no" has judged this build's schema, and
+ * starting anyway would publish messages nobody can read. A registry that does not answer has
+ * judged nothing, and a producer that exits over it is a service killed by a dependency it
+ * needs once — so that case is a warning and another attempt on the schedule below. Casting a
+ * vote fails in the meantime, since serialising one needs the id; everything else this service
+ * does carries on, and it recovers without help.
  */
 @Component
 public class VoteEventAvroSerializer {
@@ -47,6 +58,9 @@ public class VoteEventAvroSerializer {
 
     private final SchemaRegistryClient registryClient;
     private final KafkaAvroSerializer serializer;
+
+    /** Set once the registry has accepted the schema; the retry stops there. */
+    private volatile boolean registered;
 
     public VoteEventAvroSerializer(@Value("${nabat.schema-registry.url}") String registryUrl,
                                    @Value("${nabat.schema-registry.cache-size:100}") int cacheSize) {
@@ -70,15 +84,30 @@ public class VoteEventAvroSerializer {
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @Scheduled(fixedDelayString = "${nabat.schema-registry.retry-interval:PT30S}")
     void registerSchemaBeforeTheFirstVote() {
+        if (registered) {
+            return;
+        }
+
         try {
             int id = registryClient.register(SUBJECT, new AvroSchema(VoteChanged.getClassSchema()));
+            registered = true;
             log.info("Registered {} as schema id {}", SUBJECT, id);
-        } catch (Exception e) {
-            // Fatal on purpose. A rejected schema means this build's events cannot be read by
-            // consumers already out there, and starting anyway would publish them regardless.
+        } catch (RestClientException e) {
+            // The registry answered, and the answer was no. That is a verdict on this build's
+            // schema — consumers already out there could not read what it would publish — so
+            // starting anyway would mean publishing them regardless. Fatal on purpose.
             throw new IllegalStateException(
-                    "Could not register " + SUBJECT + " with the schema registry", e);
+                    SUBJECT + " was rejected by the schema registry: " + e.getMessage(), e);
+        } catch (IOException e) {
+            // The registry did not answer, which is a verdict on nothing. Retrying beats
+            // exiting: casting a vote does fail meanwhile — serialising one needs the id this
+            // call would have cached — but reads, health and every other endpoint keep
+            // working, and the service recovers by itself instead of crash-looping until a
+            // human notices.
+            log.warn("Schema registry unreachable ({}); {} not registered yet, so votes will "
+                     + "fail until it answers. Retrying.", e.getMessage(), SUBJECT);
         }
     }
 }
