@@ -13,12 +13,14 @@ import com.example.nabatvoting.domain.model.AlertCredibility;
 import com.example.nabatvoting.domain.model.VoteCounts;
 import com.example.nabatvoting.domain.port.in.CastVoteCommand;
 import com.example.nabatvoting.domain.port.in.CastVoteUseCase;
+import com.example.nabatvoting.domain.port.out.AlertVoteLock;
 import com.example.nabatvoting.domain.port.out.CredibilityProjectionStore;
 import com.example.nabatvoting.domain.port.out.VoteEventPublisher;
 import com.example.nabatvoting.domain.port.out.VoteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -32,6 +34,7 @@ class CastVoteServiceTest {
     private VoteRepository voteRepository;
     private VoteEventPublisher voteEventPublisher;
     private CredibilityProjectionStore credibilityProjectionStore;
+    private AlertVoteLock alertVoteLock;
     private CastVoteService service;
 
     @BeforeEach
@@ -39,7 +42,9 @@ class CastVoteServiceTest {
         voteRepository = mock(VoteRepository.class);
         voteEventPublisher = mock(VoteEventPublisher.class);
         credibilityProjectionStore = mock(CredibilityProjectionStore.class);
-        service = new CastVoteService(voteRepository, voteEventPublisher, credibilityProjectionStore);
+        alertVoteLock = mock(AlertVoteLock.class);
+        service = new CastVoteService(
+                voteRepository, voteEventPublisher, credibilityProjectionStore, alertVoteLock);
         // castVote/removeVote now read the tallies back from the write model inside the
         // mutating transaction, so this must answer for every mutating test.
         when(voteRepository.countsFor(any())).thenReturn(VoteCounts.EMPTY);
@@ -271,5 +276,40 @@ class CastVoteServiceTest {
         assertThat(event.alertId()).isEqualTo("alert-rm");
         assertThat(event.voterId()).isEqualTo("voter-F");
         assertThat(event.removedAt()).isNotNull();
+    }
+
+    /**
+     * The lock is taken before the tallies are read, and that order is the whole point.
+     *
+     * <p>Reading first and locking afterwards compiles, passes every other test here, and
+     * leaves the defect exactly as it was: two concurrent voters each read a total that
+     * excludes the other and both publish it as an absolute count. The failure is invisible
+     * without concurrency, so the order is pinned here rather than left to be re-derived —
+     * {@code twoConcurrentVotersOnOneAlertBothEndUpInTheScore} in nabat-app is the test that
+     * proves it matters, and it needs six containers to say so.
+     */
+    @Test
+    void castVote_locksTheAlertBeforeReadingTheTallies() {
+        AlertId alertId = new AlertId("alert-lock");
+        VoterId voterId = new VoterId("voter-G");
+
+        service.castVote(new CastVoteCommand(alertId, voterId, VoteType.CONFIRM));
+
+        InOrder inOrder = inOrder(alertVoteLock, voteRepository);
+        inOrder.verify(alertVoteLock).acquire(alertId);
+        inOrder.verify(voteRepository).countsFor(alertId);
+    }
+
+    /** Removal publishes absolute tallies too, so it needs the same serialisation. */
+    @Test
+    void removeVote_locksTheAlertBeforeReadingTheTallies() {
+        AlertId alertId = new AlertId("alert-lock-rm");
+        VoterId voterId = new VoterId("voter-H");
+
+        service.removeVote(alertId, voterId);
+
+        InOrder inOrder = inOrder(alertVoteLock, voteRepository);
+        inOrder.verify(alertVoteLock).acquire(alertId);
+        inOrder.verify(voteRepository).countsFor(alertId);
     }
 }

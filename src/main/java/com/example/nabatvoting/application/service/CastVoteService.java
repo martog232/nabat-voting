@@ -12,6 +12,7 @@ import com.example.nabatvoting.domain.model.VoteType;
 import com.example.nabatvoting.domain.model.VoterId;
 import com.example.nabatvoting.domain.port.in.CastVoteCommand;
 import com.example.nabatvoting.domain.port.in.CastVoteUseCase;
+import com.example.nabatvoting.domain.port.out.AlertVoteLock;
 import com.example.nabatvoting.domain.port.out.CredibilityProjectionStore;
 import com.example.nabatvoting.domain.port.out.VoteEventPublisher;
 import com.example.nabatvoting.domain.port.out.VoteRepository;
@@ -27,18 +28,28 @@ public class CastVoteService implements CastVoteUseCase {
     private final VoteRepository voteRepository;
     private final VoteEventPublisher voteEventPublisher;
     private final CredibilityProjectionStore credibilityProjectionStore;
+    private final AlertVoteLock alertVoteLock;
 
     public CastVoteService(VoteRepository voteRepository,
                            VoteEventPublisher voteEventPublisher,
-                           CredibilityProjectionStore credibilityProjectionStore) {
+                           CredibilityProjectionStore credibilityProjectionStore,
+                           AlertVoteLock alertVoteLock) {
         this.voteRepository = voteRepository;
         this.voteEventPublisher = voteEventPublisher;
         this.credibilityProjectionStore = credibilityProjectionStore;
+        this.alertVoteLock = alertVoteLock;
     }
 
     @Override
     @Transactional
     public CastVoteResult castVote(CastVoteCommand command) {
+        // First, and before the clock is read. Everything below is a read-modify-write of one
+        // alert's tallies, and the absolute numbers it puts on the event are only true if no
+        // other vote on this alert commits in the middle of it. Taking the lock first also
+        // makes `now` fall in the order the votes were actually applied, which is the order
+        // OutboxRelay drains them in.
+        alertVoteLock.acquire(command.alertId());
+
         Instant now = Instant.now();
         Optional<Vote> existing = voteRepository.findByAlertIdAndVoterId(command.alertId(), command.voterId());
 
@@ -86,6 +97,10 @@ public class CastVoteService implements CastVoteUseCase {
     @Override
     @Transactional
     public VoteStats removeVote(AlertId alertId, VoterId voterId) {
+        // Same reasoning as castVote: this also reads the tallies back and publishes them as
+        // absolute values, so it has to be serialised against concurrent votes on this alert.
+        alertVoteLock.acquire(alertId);
+
         voteRepository.deleteByAlertIdAndVoterId(alertId, voterId);
 
         VoteCounts counts = countsFromWriteModel(alertId);
