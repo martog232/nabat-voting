@@ -76,10 +76,15 @@ management:
       application: ${spring.application.name}
   tracing:
     sampling:
-      probability: 1.0
-  zipkin:
-    tracing:
-      endpoint: ${ZIPKIN_ENDPOINT:http://nabat-zipkin:9411/api/v2/spans}
+      probability: ${NABAT_TRACING_SAMPLING_PROBABILITY:1.0}
+    # `tracing.export.zipkin`, not `zipkin.tracing`: Boot 4 moved the exporter into its
+    # own module and renamed the property. The old spelling is still in that module's
+    # metadata but nothing binds it, so it was ignored without a word and the exporter
+    # fell back to localhost:9411 — the container itself. Every span was dropped, and
+    # Zipkin showed a single service while a vote's trace ended at the boundary.
+    export:
+      zipkin:
+        endpoint: ${ZIPKIN_ENDPOINT:http://nabat-zipkin:9411/api/v2/spans}
 
 logging:
   pattern:

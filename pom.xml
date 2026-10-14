@@ -197,18 +197,24 @@
             <artifactId>spring-kafka-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+            Tracing: the Brave bridge that populates MDC traceId/spanId per request, and
+            Zipkin export.
 
+            One starter rather than the three artifacts this used to name
+            (micrometer-tracing-bridge-brave, zipkin-sender-okhttp3, zipkin-reporter-brave).
+            Boot 4 moved the auto-configuration out of the core jar into
+            spring-boot-micrometer-tracing-brave and spring-boot-zipkin, which the starter
+            pulls in along with the bridge. Naming only the bridge put Brave on the classpath
+            with nothing to configure it — no Tracer bean, so no span was ever recorded and
+            none exported. It failed silently: every log line read `[nabat-voting,,]` with an
+            empty trace id, and Zipkin knew a single service, so a vote could be followed
+            through nabat-app and vanished at the boundary. nabat-app hit this on the same
+            Boot 4 upgrade and fixed it the same way.
+        -->
         <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-tracing-bridge-brave</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.zipkin.reporter2</groupId>
-            <artifactId>zipkin-sender-okhttp3</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.zipkin.reporter2</groupId>
-            <artifactId>zipkin-reporter-brave</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-zipkin</artifactId>
         </dependency>
     </dependencies>
 
